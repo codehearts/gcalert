@@ -78,6 +78,7 @@ quiet_flag = False
 login_retry_sleeptime = 300 # seconds between reconnects in case of errors
 threads_offset = 5 # this many seconds offset between the two threads' runs
 strftime_string = '%Y-%m-%d  %H:%M' # in the event display
+icon = 'gtk-dialog-info' # icon to use in notifications
 
 # -------------------------------------------------------------------------------------------
 # end of user-changeable stuff here
@@ -139,9 +140,9 @@ class GcEvent(object):
         """Show the alarm box for one event/recurrence"""
         message( " ***** ALARM ALARM ALARM: %s ****  " % self  )
         if self.where:
-            a=pynotify.Notification( self.title, "<b>Starting:</b> %s\n<b>Where:</b> %s" % (self.starttime_str, self.where), 'gtk-dialog-info')
+            a=pynotify.Notification( self.title, "<b>Starting:</b> %s\n<b>Where:</b> %s" % (self.starttime_str, self.where), icon)
         else:
-            a=pynotify.Notification( self.title, "<b>Starting:</b> %s" % self.starttime_str, 'gtk-dialog-info')
+            a=pynotify.Notification( self.title, "<b>Starting:</b> %s" % self.starttime_str, icon)
         # let the alarm stay until it's closed by hand (acknowledged)
         a.set_timeout(pynotify.EXPIRES_NEVER)
         if not a.show():
@@ -320,6 +321,8 @@ def usage():
     print "                        attempts (default: %d)" % login_retry_sleeptime
     print " -t F, --timeformat=F : set strftime(3) string for displaying"
     print "                        event start times (default: '%s')" % strftime_string
+    print " -i I, --icon=I       : set the icon to display in "
+    print "                        notifications (default: '%s')" % icon
 
 def get_calendar_service():
     """
@@ -398,7 +401,7 @@ if __name__ == '__main__':
     #
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hdus:q:a:l:r:t:", ["help", "debug", "quiet", "secret=", "query=", "alarm=", "look=", "retry=", "timeformat="])
+        opts, args = getopt.getopt(sys.argv[1:], "hdus:q:a:l:r:t:i:", ["help", "debug", "quiet", "secret=", "query=", "alarm=", "look=", "retry=", "timeformat=", "icon="])
     except getopt.GetoptError as err:
         # print help information and exit:
         print str(err) # will print something like "option -a not recognized"
@@ -431,6 +434,9 @@ if __name__ == '__main__':
             elif o in ("-t", "--timeformat"):
                 strftime_string = a
                 debug("strftime_string set to %s" % strftime_string)
+            elif o in ("-i", "--icon"):
+                icon = a
+                debug("icon set to %s" % icon)
             else:
                 assert False, "unhandled option"
     except ValueError:
