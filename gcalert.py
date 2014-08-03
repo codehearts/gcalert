@@ -74,6 +74,7 @@ alarm_sleeptime = 30 # seconds between waking up to check alarm list
 query_sleeptime = 180 # seconds between querying Google 
 lookahead_days = 3 # look this many days in the future
 debug_flag = False
+quiet_flag = False
 login_retry_sleeptime = 300 # seconds between reconnects in case of errors
 threads_offset = 5 # this many seconds offset between the two threads' runs
 strftime_string = '%Y-%m-%d  %H:%M' # in the event display
@@ -161,8 +162,9 @@ class GcEvent(object):
 
 def message(s):
     """Print one message 's' and flush the buffer; useful when redirected to a file"""
-    print "%s gcalert.py: %s" % ( time.asctime(), s)
-    sys.stdout.flush()
+    if not quiet_flag:
+        print "%s gcalert.py: %s" % ( time.asctime(), s)
+        sys.stdout.flush()
 
 # ----------------------------
 
@@ -307,6 +309,7 @@ def usage():
     print "                        username and password, newline-separated"
     print "                        Default: $HOME/.gcalert_secret"
     print " -d, --debug          : produce debug messages"
+    print " -u, --quiet          : disables all non-debug messages"
     print " -q N, --query=N      : poll Google every N seconds for newly"
     print "                        added events (default: %d)" % query_sleeptime
     print " -a M, --alarm=M      : awake and produce alarms every N "
@@ -395,7 +398,7 @@ if __name__ == '__main__':
     #
 
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hds:q:a:l:r:t:", ["help", "debug", "secret=", "query=", "alarm=", "look=", "retry=", "timeformat="])
+        opts, args = getopt.getopt(sys.argv[1:], "hdus:q:a:l:r:t:", ["help", "debug", "quiet", "secret=", "query=", "alarm=", "look=", "retry=", "timeformat="])
     except getopt.GetoptError as err:
         # print help information and exit:
         print str(err) # will print something like "option -a not recognized"
@@ -408,6 +411,8 @@ if __name__ == '__main__':
             elif o in ("-h", "--help"):
                 usage()
                 sys.exit()
+            elif o in ("-u", "--quiet"):
+                quiet_flag = True
             elif o in ("-s", "--secret"):
                 secrets_file = a
                 debug("secrets_file set to %s" % secrets_file)
