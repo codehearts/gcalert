@@ -44,7 +44,7 @@ import time
 import urllib
 import thread
 import signal
-from datetime import timedelta, datetime
+import datetime
 
 # dependencies below come from separate packages, the rest (above) is in the
 # standard library so those are expected to work :)
@@ -58,7 +58,6 @@ try:
     import pynotify
     # magical date parser and timezone handler
     import dateutil.tz
-    from dateutil.tz import tzlocal
     import dateutil.parser
     # for Google Calendar API v3
     import httplib2
@@ -77,6 +76,8 @@ __program__ = '2.0'
 __version__ = '2.0'
 __API_CLIENT_ID__ = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
 __API_CLIENT_SECRET__ = 'UECdkOkaoAnyYe5-4DBm31mu'
+
+cs = None
 
 # -------------------------------------------------------------------------------------------
 # default values for parameters
@@ -269,7 +270,31 @@ def do_login(calendarservice):
     returns: True or False (logged-in or failed)
 
     """
-    message( "Logged in to Google Calendar" )
+    global cs
+
+    try:
+        storage = Storage(os.path.expanduser('~/.gcalert_oauth'))
+        credentials = storage.get()
+
+        if credentials is None or credentials.invalid:
+            credentials = run(
+                OAuth2WebServerFlow(
+                    client_id     = __API_CLIENT_ID__,
+                    client_secret = __API_CLIENT_SECRET__,
+                    scope         = 'https://www.googleapis.com/auth/calendar',
+                    user_agent    = __program__+'/'+__version__
+                ),
+                storage
+            )
+
+        authHttp = credentials.authorize(httplib2.Http())
+        cs = build(serviceName='calendar', version='v3', http=authHttp)
+    except Exception as error:
+        debug('Failed to authenticate to Google: {0}'.format(error))
+        message('Failed to authenticate to Google')
+        return False
+
+    message('Logged in to Google Calendar')
     return True # we're logged in
 
 # -------------------------------------------------------------------------------------------
@@ -333,26 +358,8 @@ def usage():
     print " -i I, --icon=I       : set the icon to display in "
     print "                        notifications (default: '%s')" % icon
 
-def _GoogleAuth():
-    storage = Storage(os.path.expanduser('~/.gcalert_oauth'))
-    credentials = storage.get()
-
-    if credentials is None or credentials.invalid:
-        credentials = run(
-            OAuth2WebServerFlow(
-                client_id = __API_CLIENT_ID__,
-                client_secret = __API_CLIENT_SECRET__,
-                scope = ['https://www.googleapis.com/auth/calendar'],
-                user_agent = __program__+'/'+__version__
-            ),
-            storage
-        )
-
-    authHttp = credentials.authorize(httplib2.Http())
-    return authHttp
-
 def get_calendar_service():
-    cs = build(serviceName='calendar', version='v3', http=_GoogleAuth())
+    global cs
     return cs
 
 def update_events_thread():
@@ -365,9 +372,9 @@ def update_events_thread():
         else:
             debug("running")
             # today
-            range_start = datetime.now(tzlocal())
+            range_start = datetime.datetime.now(dateutil.tz.tzlocal())
             # tommorrow, or later
-            range_end = range_start + timedelta(days=lookahead_days)
+            range_end = range_start + datetime.timedelta(days=lookahead_days)
             (connectionstatus,newevents) = date_range_query(cs, range_start.isoformat(), range_end.isoformat())
             if connectionstatus: # if we're still logged in, the query was successful and newevents is valid
                 events_lock.acquire()
@@ -418,7 +425,7 @@ if __name__ == '__main__':
                 secrets_file = a
                 debug("secrets_file set to %s" % secrets_file)
             elif o in ("-q", "--query"):
-                query_sleeptime = int(a) # FIXME handle non-integers graciously
+                query_sleeptime = max(intval(a), 5) # FIXME handle non-integers graciously
                 debug("query_sleeptime set to %d" % query_sleeptime)
             elif o in ("-a", "--alarm"):
                 alarm_sleeptime = int(a)
