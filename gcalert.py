@@ -72,33 +72,37 @@ except ImportError as e:
 
 # -------------------------------------------------------------------------------------------
 
-__program__ = '2.0'
+__program__ = 'gcalert'
 __version__ = '2.0'
 __API_CLIENT_ID__ = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
 __API_CLIENT_SECRET__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
 cs = None
 
-# -------------------------------------------------------------------------------------------
-# default values for parameters
 
-secrets_file = os.path.join(os.environ["HOME"],".gcalert_secret")
-alarm_sleeptime = 30 # seconds between waking up to check alarm list
-query_sleeptime = 180 # seconds between querying Google
-lookahead_days = 3 # look this many days in the future
-debug_flag = False
-quiet_flag = False
-login_retry_sleeptime = 300 # seconds between reconnects in case of errors
-threads_offset = 5 # this many seconds offset between the two threads' runs
-strftime_string = '%Y-%m-%d  %H:%M' # in the event display
-icon = 'gtk-dialog-info' # icon to use in notifications
+#-----------------------------------------------------------------------------#
+# Default settings                                                            #
+#-----------------------------------------------------------------------------#
+
+secrets_filename    = '.gcalert_oauth'
+secrets_file        = os.path.join(os.environ['HOME'], secrets_filename)
+alarm_sleeptime     = 30 # Seconds between waking up to check the alarm list
+query_sleeptime     = 180 # Seconds between querying for new events
+lookahead_days      = 3 # Look this many days in the future
+debug_flag          = False # Display debug messages
+quiet_flag          = False # Suppresses all non-debug messages
+reconnect_sleeptime = 300 # Seconds between reconnects in case of errors
+threads_offset      = 5 # Offset between the two threads' runs, in seconds
+strftime_string     = '%Y-%m-%d  %H:%M' # String to format times with
+icon                = 'gtk-dialog-info' # Icon to use in notifications
+
 
 # -------------------------------------------------------------------------------------------
 # end of user-changeable stuff here
 # -------------------------------------------------------------------------------------------
 
-events=[] # all events seen so far that are yet to start
-events_lock=thread.allocate_lock() # hold to access events[]
+events = [] # all events seen so far that are yet to start
+events_lock = thread.allocate_lock() # hold to access events[]
 alarmed_events = [] # events (occurences etc) already alarmed
 connected = False # google connection is disconnected
 
@@ -114,10 +118,11 @@ class GcEvent(object):
         end_string: event end time as string
         minutes: how many minutes before the start is the alarm to go off
         """
-        self.title=title
-        self.where=where
-        self.start=dateutil.parser.parse(start_string)
-        self.end=dateutil.parser.parse(end_string)
+        self.title = title
+        self.where = where
+        self.start = dateutil.parser.parse(start_string)
+        self.end   = dateutil.parser.parse(end_string)
+
         # Google sometimes does not supply timezones
         # (for events that last more than a day and have no time set, apparently)
         # python can't compare two dates if only one has TZ info
@@ -273,7 +278,7 @@ def do_login(calendarservice):
     global cs
 
     try:
-        storage = Storage(os.path.expanduser('~/.gcalert_oauth'))
+        storage = Storage(secrets_file)
         credentials = storage.get()
 
         if credentials is None or credentials.invalid:
@@ -335,29 +340,6 @@ def process_events_thread():
         # add something new meanwhile
         time.sleep(alarm_sleeptime)
 
-def usage():
-    """Print usage information."""
-    print "gcalert version %s" % __version__
-    print "Poll Google Calendar and display alarms on events that have alarms defined."
-    print "Usage: gcalert.py [options]"
-    print " -s F, --secret=F     : specify location of a file containing"
-    print "                        username and password, newline-separated"
-    print "                        Default: $HOME/.gcalert_secret"
-    print " -d, --debug          : produce debug messages"
-    print " -u, --quiet          : disables all non-debug messages"
-    print " -q N, --query=N      : poll Google every N seconds for newly"
-    print "                        added events (default: %d)" % query_sleeptime
-    print " -a M, --alarm=M      : awake and produce alarms every N "
-    print "                        seconds (default: %d)" % alarm_sleeptime
-    print " -l L, --look=L       : \"look ahead\" L days in the calendar"
-    print "                        for events (default: %d)" % lookahead_days
-    print " -r R, --retry=R      : sleep R seconds between reconnect"
-    print "                        attempts (default: %d)" % login_retry_sleeptime
-    print " -t F, --timeformat=F : set strftime(3) string for displaying"
-    print "                        event start times (default: '%s')" % strftime_string
-    print " -i I, --icon=I       : set the icon to display in "
-    print "                        notifications (default: '%s')" % icon
-
 def get_calendar_service():
     global cs
     return cs
@@ -367,7 +349,7 @@ def update_events_thread():
     connectionstatus = do_login(cs)
     while 1:
         if(not connectionstatus):
-            time.sleep(login_retry_sleeptime)
+            time.sleep(reconnect_sleeptime)
             connectionstatus = do_login(cs)
         else:
             debug("running")
@@ -398,6 +380,67 @@ def update_events_thread():
                 events_lock.release()
             debug("finished")
             time.sleep(query_sleeptime)
+
+
+#-----------------------------------------------------------------------------#
+# Usage instructions                                                          #
+#-----------------------------------------------------------------------------#
+
+def usage():
+    print('''gcalert {version} - Polls Google Calendar and displays reminder notifications for events.
+
+Usage: {executable} [options]
+
+-s
+--secret   Specifies the location of the oauth credentials cache.
+           (Default: {default_secret})
+
+-d
+--debug    Produces debug messages.
+
+-u
+--quiet    Disables all non-debug messages.
+
+-q
+--query    How often to check for new calendar events.
+           (Default: {default_query})
+
+-a seconds
+--alarm seconds
+           Amount of time to wait before checking for alarms to set off.
+           (Default: {default_alarm})
+
+-l days
+--look days
+           Number of days to look ahead by and cache.
+
+-r seconds
+--retry seconds
+           Number of seconds to wait between reconnection attempts.
+           (Default: {default_retry})
+
+-t format_string
+--timeformat format_string
+           Formatting string to use for displaying event times.
+           Must be formatted according to strftime(3). (Default: {default_timeformat})
+
+-i icon_name
+--icon icon_name
+           Sets the icon displayed in alarm notifications.
+           (Default: {default_icon})
+        '''.format(
+            version            = __version__,
+            executable         = sys.argv[0],
+            default_secret     = '~/' + secrets_filename,
+            default_query      = query_sleeptime,
+            default_alarm      = alarm_sleeptime,
+            default_look       = lookahead_days,
+            default_retry      = reconnect_sleeptime,
+            default_timeformat = strftime_string,
+            default_icon       = icon
+        )
+    )
+
 
 if __name__ == '__main__':
     # -------------------------------------------------------------------------------------------
@@ -434,8 +477,8 @@ if __name__ == '__main__':
                 lookahead_days = int(a)
                 debug("lookahead_days set to %d" % lookahead_days)
             elif o in ("-r", "--retry"):
-                login_retry_sleeptime = int(a)
-                debug("login_retry_sleeptime set to %d" % login_retry_sleeptime)
+                reconnect_sleeptime = int(a)
+                debug("reconnect_sleeptime set to %d" % reconnect_sleeptime)
             elif o in ("-t", "--timeformat"):
                 strftime_string = a
                 debug("strftime_string set to %s" % strftime_string)
@@ -459,7 +502,6 @@ if __name__ == '__main__':
 
     # starting up
     message("gcalert %s running..." % __version__)
-    debug("SETTINGS: secrets_file: %s alarm_sleeptime: %d query_sleeptime: %d lookahead_days: %d login_retry_sleeptime: %d strftime_string: %s" % ( secrets_file, alarm_sleeptime, query_sleeptime, lookahead_days, login_retry_sleeptime, strftime_string ))
+    debug("SETTINGS: secrets_file: %s alarm_sleeptime: %d query_sleeptime: %d lookahead_days: %d reconnect_sleeptime: %d strftime_string: %s" % ( secrets_file, alarm_sleeptime, query_sleeptime, lookahead_days, reconnect_sleeptime, strftime_string ))
 
     update_events_thread()
-
