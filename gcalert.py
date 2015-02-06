@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python2
 # vim: ai expandtab
 #
 # This script will periodically check your Google Calendar and display an alarm
@@ -11,21 +11,21 @@
 # Home: http://github.com/raas/gcalert
 #
 # ----------------------------------------------------------------------------
-# 
+#
 # Copyright 2009 Andras Horvath (andras.horvath nospamat gmailcom) This
 # program is free software: you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free
 # Software Foundation, either version 3 of the License, or (at your
 # option) any later version.
-# 
+#
 # This program is distributed in the hope that it will be useful, but
 # WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
 # General Public License for more details.
-# 
+#
 # You should have received a copy of the GNU General Public License along
 # with this program.  If not, see <http://www.gnu.org/licenses/>.
-# 
+#
 # ----------------------------------------------------------------------------
 #
 # TODO:
@@ -44,19 +44,28 @@ import time
 import urllib
 import thread
 import signal
+from datetime import timedelta, datetime
 
 # dependencies below come from separate packages, the rest (above) is in the
 # standard library so those are expected to work :)
 try:
     # google calendar stuff
-    import gdata.calendar.service 
+    import gdata.calendar.service
+    import gdata.calendar.client
     import gdata.service
     import gdata.calendar
     # libnotify handler
     import pynotify
     # magical date parser and timezone handler
-    import dateutil.tz 
-    import dateutil.parser 
+    import dateutil.tz
+    from dateutil.tz import tzlocal
+    import dateutil.parser
+    # for Google Calendar API v3
+    import httplib2
+    from apiclient.discovery import build
+    from oauth2client.file import Storage
+    from oauth2client.client import OAuth2WebServerFlow
+    from oauth2client.tools import run
 except ImportError as e:
     print "Dependency was not found! %s" % e
     print "(Try: sudo apt-get install python-notify python-gdata python-dateutil notification-daemon)"
@@ -64,14 +73,17 @@ except ImportError as e:
 
 # -------------------------------------------------------------------------------------------
 
-myversion = '2.0'
+__program__ = '2.0'
+__version__ = '2.0'
+__API_CLIENT_ID__ = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
+__API_CLIENT_SECRET__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
 # -------------------------------------------------------------------------------------------
 # default values for parameters
 
 secrets_file = os.path.join(os.environ["HOME"],".gcalert_secret")
 alarm_sleeptime = 30 # seconds between waking up to check alarm list
-query_sleeptime = 180 # seconds between querying Google 
+query_sleeptime = 180 # seconds between querying Google
 lookahead_days = 3 # look this many days in the future
 debug_flag = False
 quiet_flag = False
@@ -114,13 +126,13 @@ class GcEvent(object):
                 self.start=self.start.replace(tzinfo=dateutil.tz.tzlocal())
         except AttributeError:
             self.start=self.start.replace(tzinfo=dateutil.tz.tzlocal())
-            
+
         try:
             if not self.end.tzname():
                 self.end=self.end.replace(tzinfo=dateutil.tz.tzlocal())
         except AttributeError:
             self.end=self.end.replace(tzinfo=dateutil.tz.tzlocal())
-            
+
         self.minutes=minutes
 
     def get_starttime_str(self):
@@ -139,10 +151,10 @@ class GcEvent(object):
         """Alarm time in unix time"""
         return self.starttime_unix-60*int(self.minutes)
 
-    starttime_str=property(fget=get_starttime_str) 
-    endtime_str=property(fget=get_endtime_str) 
-    starttime_unix=property(fget=get_starttime_unix) 
-    alarm_time_unix=property(fget=get_alarm_time_unix) 
+    starttime_str=property(fget=get_starttime_str)
+    endtime_str=property(fget=get_endtime_str)
+    starttime_unix=property(fget=get_starttime_unix)
+    alarm_time_unix=property(fget=get_alarm_time_unix)
 
     def alarm(self):
         """Show the alarm box for one event/recurrence"""
@@ -194,27 +206,24 @@ def stopthismadness(signl, frme):
 
 # ----------------------------
 
-def date_range_query(calendarservice, start_date='2007-01-01', end_date='2007-07-01'):
+def date_range_query(calendarservice, start_date=None, end_date=None):
     """
     Get a list of events happening between the given dates in all calendars the user has
     calendarservice: Calendar Service as returned by get_calendar_service()
     returns: (success, list of events)
-    
+
     Each reminder occurence creates a new event (new GcEvent object)
     """
     google_events=[] # events in all the Google Calendars
     event_list=[] # our parsed event list
     try:
-        feed = calendarservice.GetAllCalendarsFeed()
+        feed = calendarservice.calendarList().list().execute()
         # Get the list of 'magic strings' used to identify each calendar
-        # in there is the full feed URL and we need the last part (=='username')
-        username_list = map(lambda x: urllib.unquote(x.id.text.split('/')[-1]), feed.entry) 
+        username_list = map(lambda x: x['id'], calendarservice.calendarList().list().execute()['items'])
         for username in username_list:
-            query = gdata.calendar.service.CalendarEventQuery(username, 'private', 'full')
-            query.start_min = start_date
-            query.start_max = end_date 
+            query = calendarservice.events().list(calendarId=username,timeMin=start_date,timeMax=end_date,singleEvents=True).execute()
             debug("processing username: %s" % username)
-            google_events += calendarservice.CalendarQuery(query).entry
+            google_events += query['items']
             debug("events so far: %d" % len(google_events))
     except Exception as error: # FIXME clearer
         debug( "Google connection lost: %s" % error )
@@ -229,26 +238,25 @@ def date_range_query(calendarservice, start_date='2007-01-01', end_date='2007-07
         where_string=''
         try:
             # join all 'where' entries together; you probably only have one anyway
-            where_string=' // '.join(map(lambda w: w.value_string, an_event.where))
-        except TypeError:
-            # not all events have 'where' fields (value_string fields), and that's okay
+            where_string = ' // '.join(an_event['location'])
+        except KeyError:
+            # not all events have 'where' fields, and that's okay
             pass
 
         # make a GcEvent out of each (event x reminder x occurence)
-        for a_when in an_event.when:
-            for a_rem in a_when.reminder:
-                debug("google event TEXT: %s METHOD: %s" % (an_event.title.text, a_rem.method) )
-                if a_rem.method == 'alert': # 'popup' in the web interface
-                    # event (one for each alarm instance) is done,
-                    # add it to the list
-                    this_event=GcEvent(
-                                an_event.title.text,
-                                where_string,
-                                a_when.start_time,
-                                a_when.end_time,
-                                a_rem.minutes)
-                    debug("new GcEvent occurence: %s" % this_event)
-                    event_list.append(this_event)
+        for a_rem in an_event['reminders']['overrides']:
+            debug("google event TEXT: %s METHOD: %s" % (an_event['summary'], a_rem) )
+            if a_rem['method'] == 'popup': # 'popup' in the web interface
+                # event (one for each alarm instance) is done,
+                # add it to the list
+                this_event=GcEvent(
+                            an_event['summary'],
+                            where_string,
+                            an_event['start']['dateTime'],
+                            an_event['end']['dateTime'],
+                            a_rem['minutes'])
+                debug("new GcEvent occurence: %s" % this_event)
+                event_list.append(this_event)
     return (True, event_list)
 
 # ----------------------------
@@ -256,26 +264,19 @@ def do_login(calendarservice):
     """
     (Re)Login to Google Calendar.
     This sometimes fails or the connection dies, so do_login() needs to be done again.
-    
+
     calendarservice: as returned by get_calendar_service()
     returns: True or False (logged-in or failed)
-    
+
     """
-    try:
-        calendarservice.ProgrammaticLogin()
-    except Exception as error:
-        debug( 'Failed to authenticate to Google: %s' % error )
-        message( 'Failed to authenticate to Google as %s' % calendarservice.email )
-        message( 'Check username, password and that the account is enabled.' )
-        return False
-    message( "Logged in to Google Calendar as %s" % calendarservice.email )
+    message( "Logged in to Google Calendar" )
     return True # we're logged in
 
 # -------------------------------------------------------------------------------------------
 def process_events_thread():
     """Process events and raise alarms via pynotify"""
     # initialize notification system
-    if not pynotify.init('gcalert-Calendar_Alerter-%s' % myversion):
+    if not pynotify.init('gcalert-Calendar_Alerter-%s' % __version__):
         print "Could not initialize pynotify / libnotify!"
         sys.exit(1)
     time.sleep(threads_offset) # give a chance for the other thread to get some events
@@ -311,7 +312,7 @@ def process_events_thread():
 
 def usage():
     """Print usage information."""
-    print "gcalert version %s" % myversion
+    print "gcalert version %s" % __version__
     print "Poll Google Calendar and display alarms on events that have alarms defined."
     print "Usage: gcalert.py [options]"
     print " -s F, --secret=F     : specify location of a file containing"
@@ -332,37 +333,26 @@ def usage():
     print " -i I, --icon=I       : set the icon to display in "
     print "                        notifications (default: '%s')" % icon
 
-def get_calendar_service():
-    """
-    Get hold of a CalendarService() and stick username/password info in it, plus some settings.
-    Return the results if successful, exit the program if not.
-    """
-    # get credentials from file
-    cs = gdata.calendar.service.CalendarService()
-    try:
-        # the 'password file' should contain two lines with username and password
-        # the :2 is there to allow a newline at the end
-        (cs.email, cs.password) = open(secrets_file).read().split('\n')[:2]
-    except IOError as error:
-        print error 
-        sys.exit(1)
-    except ValueError:
-        print "Password file %s should contain two newline-separated lines: username (without gmail.com) and password." % secrets_file
-        sys.exit(2)
-    except Exception as error:
-        print "Something unhandled went wrong reading your password file '%s', please report this as a bug." % secrets_file
-        print error
-        sys.exit(3)
+def _GoogleAuth():
+    storage = Storage(os.path.expanduser('~/.gcalert_oauth'))
+    credentials = storage.get()
 
-    # Full-fledged SSL needs the SSL patch (to python-gdata_1.2.4-0ubuntu2 at least)
-    # see http://groups.google.com/group/gdata-python-client-library-contributors/browse_thread/thread/48254170a6f6818a?pli=1
-    #
-    # if not present, the login will go over SSL
-    # but the actual calendar will be retrieved over plain HTTP
-    #
-    # tcpdump if unsure ;)
-    cs.ssl = True;
-    cs.source = 'gcalert-Calendar_Alerter-%s' % myversion
+    if credentials is None or credentials.invalid:
+        credentials = run(
+            OAuth2WebServerFlow(
+                client_id = __API_CLIENT_ID__,
+                client_secret = __API_CLIENT_SECRET__,
+                scope = ['https://www.googleapis.com/auth/calendar'],
+                user_agent = __program__+'/'+__version__
+            ),
+            storage
+        )
+
+    authHttp = credentials.authorize(httplib2.Http())
+    return authHttp
+
+def get_calendar_service():
+    cs = build(serviceName='calendar', version='v3', http=_GoogleAuth())
     return cs
 
 def update_events_thread():
@@ -375,10 +365,10 @@ def update_events_thread():
         else:
             debug("running")
             # today
-            range_start = time.strftime("%Y-%m-%d",time.localtime())
+            range_start = datetime.now(tzlocal())
             # tommorrow, or later
-            range_end=time.strftime("%Y-%m-%d",time.localtime(time.time()+lookahead_days*24*3600))
-            (connectionstatus,newevents) = date_range_query(cs, range_start, range_end)
+            range_end = range_start + timedelta(days=lookahead_days)
+            (connectionstatus,newevents) = date_range_query(cs, range_start.isoformat(), range_end.isoformat())
             if connectionstatus: # if we're still logged in, the query was successful and newevents is valid
                 events_lock.acquire()
                 now = time.time()
@@ -454,15 +444,15 @@ if __name__ == '__main__':
     cs = get_calendar_service()
 
     # set up ^C handler
-    signal.signal( signal.SIGINT, stopthismadness ) 
+    signal.signal( signal.SIGINT, stopthismadness )
 
     # start up the event processing thread
     debug("Starting p_e_t")
     thread.start_new_thread(process_events_thread,())
 
     # starting up
-    message("gcalert %s running..." % myversion)
+    message("gcalert %s running..." % __version__)
     debug("SETTINGS: secrets_file: %s alarm_sleeptime: %d query_sleeptime: %d lookahead_days: %d login_retry_sleeptime: %d strftime_string: %s" % ( secrets_file, alarm_sleeptime, query_sleeptime, lookahead_days, login_retry_sleeptime, strftime_string ))
-    
+
     update_events_thread()
 
