@@ -59,7 +59,7 @@ try:
     # magical date parser and timezone handler
     import dateutil.tz
     import dateutil.parser
-    # for Google Calendar API v3
+    # For Google Calendar API v3
     import httplib2
     from apiclient.discovery import build
     from oauth2client.file import Storage
@@ -97,31 +97,34 @@ strftime_string     = '%Y-%m-%d  %H:%M' # String to format times with
 icon                = 'gtk-dialog-info' # Icon to use in notifications
 
 
-# -------------------------------------------------------------------------------------------
-# end of user-changeable stuff here
-# -------------------------------------------------------------------------------------------
+
+#-----------------------------------------------------------------------------#
+# Calendar Alerts Class                                                       #
+#-----------------------------------------------------------------------------#
 
 events = [] # all events seen so far that are yet to start
 events_lock = thread.allocate_lock() # hold to access events[]
 alarmed_events = [] # events (occurences etc) already alarmed
-connected = False # google connection is disconnected
+connected = False # Google connection is disconnected
 
-class GcEvent(object):
-    """
-    One event occurence (actually, one alarm for an event)
-    """
+class GCalendarAlarm(object):
+    """Represents an instance of a calendar alarm for an event."""
+
     def __init__(self, title, where, start_string, end_string, minutes):
+        """Creates a new alarm for the given event.
+
+        Args:
+            title (str): The title of the event.
+            where (str): The location of the event, or an empty string.
+            start_string (str): The start time of the event as a string.
+            end_string (str): The end time of the event as a string.
+            minutes (int): How many minutes before the start of the event to set off the alarm.
         """
-        title: event title text
-        where: where is the event (or empty string)
-        start_string: event start time as string
-        end_string: event end time as string
-        minutes: how many minutes before the start is the alarm to go off
-        """
-        self.title = title
-        self.where = where
-        self.start = dateutil.parser.parse(start_string)
-        self.end   = dateutil.parser.parse(end_string)
+        self.title   = title
+        self.where   = where
+        self.start   = dateutil.parser.parse(start_string)
+        self.end     = dateutil.parser.parse(end_string)
+        self.minutes = minutes
 
         # Google sometimes does not supply timezones
         # (for events that last more than a day and have no time set, apparently)
@@ -129,88 +132,110 @@ class GcEvent(object):
         # this might screw us at, say, if DST changes between when we get the event and its alarm
         try:
             if not self.start.tzname():
-                self.start=self.start.replace(tzinfo=dateutil.tz.tzlocal())
+                self.start = self.start.replace(tzinfo=dateutil.tz.tzlocal())
         except AttributeError:
-            self.start=self.start.replace(tzinfo=dateutil.tz.tzlocal())
+            self.start = self.start.replace(tzinfo=dateutil.tz.tzlocal())
 
         try:
             if not self.end.tzname():
-                self.end=self.end.replace(tzinfo=dateutil.tz.tzlocal())
+                self.end = self.end.replace(tzinfo=dateutil.tz.tzlocal())
         except AttributeError:
-            self.end=self.end.replace(tzinfo=dateutil.tz.tzlocal())
+            self.end = self.end.replace(tzinfo=dateutil.tz.tzlocal())
 
-        self.minutes=minutes
-
-    def get_starttime_str(self):
-        """Start time in local timezone, as a preformatted string"""
+    @property
+    def starttime_str(self):
+        """Returns a string representing the start time (in the local timezone) of the event."""
         return self.start.astimezone(dateutil.tz.tzlocal()).strftime(strftime_string)
 
-    def get_endtime_str(self):
-        """End time in local timezone, as a preformatted string"""
+    @property
+    def endtime_str(self):
+        """Returns a string representing the end time (in the local timezone) of the event."""
         return self.end.astimezone(dateutil.tz.tzlocal()).strftime(strftime_string)
 
-    def get_starttime_unix(self):
-        """Start time in unix time"""
+    @property
+    def starttime_unix(self):
+        """Returns the start time of the event in unix time."""
         return int(self.start.astimezone(dateutil.tz.tzlocal()).strftime('%s'))
 
-    def get_alarm_time_unix(self):
-        """Alarm time in unix time"""
-        return self.starttime_unix-60*int(self.minutes)
+    @property
+    def alarm_time_unix(self):
+        """Returns the end time of the event in unix time."""
+        return self.starttime_unix - 60 * int(self.minutes)
 
-    starttime_str=property(fget=get_starttime_str)
-    endtime_str=property(fget=get_endtime_str)
-    starttime_unix=property(fget=get_starttime_unix)
-    alarm_time_unix=property(fget=get_alarm_time_unix)
-
-    def alarm(self):
+    def trigger_alarm(self):
         """Show the alarm box for one event/recurrence"""
-        message( " ***** ALARM ALARM ALARM: %s ****  " % self  )
+        message(" ***** ALARM ALARM ALARM: {0} ****  ".format(self))
+
         if self.where:
-            a=pynotify.Notification( self.title, "<b>Starting:</b> %s\n<b>Where:</b> %s" % (self.starttime_str, self.where), icon)
+            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}\n<b>Where:</b> {location}'.format(start=self.starttime_str, location=self.where), icon)
         else:
-            a=pynotify.Notification( self.title, "<b>Starting:</b> %s" % self.starttime_str, icon)
-        # let the alarm stay until it's closed by hand (acknowledged)
+            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}'.format(start=self.starttime_str), icon)
+
+        # Display the alarm notification the user closes it manually
         a.set_timeout(pynotify.EXPIRES_NEVER)
+
         if not a.show():
-            message( "Failed to send alarm notification!" )
+            message('Failed to send alarm notification!')
 
     def __str__(self):
-        return "Title: %s Where: %s Start: %s Alarm_minutes: %s" % ( self.title, self.where, self.starttime_str, self.minutes )
+        """Returns a string representation of this object's contents."""
+        return 'Title: {title}, Location: {location}, Start: {start}, Alarm_minutes: {minutes}'.format(
+            title    = self.title,
+            location = self.where,
+            start    = self.starttime_str,
+            minutes  = self.minutes
+        )
 
     def __repr__(self):
-        return "GcEvent(%s, %s, %s, %s, %s)" % ( self.title, self.where, self.starttime_str, self.endtime_str, self.minutes )
+        """Returns a string representation of this object."""
+        return 'GCalendarAlarm({title}, {location}, {start}, {end}, {minutes})'.format(
+            title    = self.title,
+            location = self.where,
+            start    = self.starttime_str,
+            end      = self.endtime_str,
+            minutes  = self.minutes
+        )
 
-    # for the 'event in list_of_events' kind of checks (two instances with the same data are indeed considered equal)
     def __eq__(self, other):
+        """Returns True if this instance has the same data as the comparison instance."""
         return self.__repr__() == other.__repr__()
 
 
-# ----------------------------
+
+#-----------------------------------------------------------------------------#
+# Console output functions                                                    #
+#-----------------------------------------------------------------------------#
 
 def message(s):
-    """Print one message 's' and flush the buffer; useful when redirected to a file"""
+    """Prints s and flushes the buffer; useful when redirected to a file."""
     if not quiet_flag:
-        print "%s gcalert.py: %s" % ( time.asctime(), s)
+        print '{timestamp} {executable}: {message}'.format(
+            timestamp=time.asctime(), executable=sys.argv[0], message=s)
         sys.stdout.flush()
 
-# ----------------------------
-
 def debug(s):
-    """Print debug message 's' if the debug_flag is set (running with -d option)"""
-    if (debug_flag):
-        message("DEBUG: %s: %s" % (sys._getframe(1).f_code.co_name, s) )
+    """Prints s if the debug_flag is set (running with -d or --debug)."""
+    if debug_flag:
+        message('DEBUG: {function}: {message}'.format(function=sys._getframe(1).f_code.co_name, message=s))
 
-# ----------------------------
 
-# signal handlers are easier than wrapping the whole show
-# into one giant try/except looking for KeyboardInterrupt
-# besides we have two threads to shut down
-def stopthismadness(signl, frme):
-    """Hook up signal handler for ^C"""
-    message("shutting down on SIGINT")
+
+#-----------------------------------------------------------------------------#
+# Signal Handlers                                                             #
+# Signal handlers are easier than wrapping everything in a giant try/except.  #
+# Additionally, we have 2 threads that we need to shut down                   #
+#-----------------------------------------------------------------------------#
+
+def stopthismadness(signal, frame):
+    """Halts execution and exits. Intended for SIGINT (^C)."""
+    message('Shutting down on SIGINT.')
     sys.exit(0)
 
-# ----------------------------
+
+
+#-----------------------------------------------------------------------------#
+# Google Calendar Query Functions                                             #
+#-----------------------------------------------------------------------------#
 
 def date_range_query(calendarservice, start_date=None, end_date=None):
     """
@@ -218,26 +243,33 @@ def date_range_query(calendarservice, start_date=None, end_date=None):
     calendarservice: Calendar Service as returned by get_calendar_service()
     returns: (success, list of events)
 
-    Each reminder occurence creates a new event (new GcEvent object)
+    Each reminder occurence creates a new event (GCalendarAlarm object).
     """
-    google_events=[] # events in all the Google Calendars
-    event_list=[] # our parsed event list
+    google_events = [] # Events in all Google Calendars
+    event_list    = [] # Our parsed events list
+
     try:
         feed = calendarservice.calendarList().list().execute()
-        # Get the list of 'magic strings' used to identify each calendar
-        username_list = map(lambda x: x['id'], calendarservice.calendarList().list().execute()['items'])
-        for username in username_list:
-            query = calendarservice.events().list(calendarId=username,timeMin=start_date,timeMax=end_date,singleEvents=True).execute()
-            debug("processing username: %s" % username)
+
+        # Get the id for each calendar
+        cal_id_list = map(lambda x: x['id'], calendarservice.calendarList().list().execute()['items'])
+
+        for cal_id in cal_id_list:
+            debug('Processing calendar: {0}'.format(cal_id))
+
+            query = calendarservice.events().list(calendarId=cal_id, timeMin=start_date, timeMax=end_date, singleEvents=True).execute()
             google_events += query['items']
-            debug("events so far: %d" % len(google_events))
+
+            debug('Events so far: {0}'.format(len(google_events)))
     except Exception as error: # FIXME clearer
-        debug( "Google connection lost: %s" % error )
+        debug('Connection lost: {0}.'.format(error))
+
         try:
-            message( "Google connection lost (%d %s), will re-connect" % (error.args[0]['status'], error.args[0]['reason']) )
+            message('Connection lost ({0} {1}), will reconnect.'.format(error.args[0]['status'], error.args[0]['reason']))
         except Exception:
-            message( "Google connection lost with unknown error, will re-connect: %s " % error )
-            message( "Please report this as a bug." )
+            message('Connection lost with unknown error, will reconnect: {0}'.format(error))
+            message('Please report this as a bug.')
+
         return (False, [])
 
     for an_event in google_events:
@@ -249,31 +281,35 @@ def date_range_query(calendarservice, start_date=None, end_date=None):
             # not all events have 'where' fields, and that's okay
             pass
 
-        # make a GcEvent out of each (event x reminder x occurence)
+        # make a GCalendarAlarm out of each (event x reminder x occurence)
         for a_rem in an_event['reminders']['overrides']:
             debug("google event TEXT: %s METHOD: %s" % (an_event['summary'], a_rem) )
             if a_rem['method'] == 'popup': # 'popup' in the web interface
                 # event (one for each alarm instance) is done,
                 # add it to the list
-                this_event=GcEvent(
+                this_event=GCalendarAlarm(
                             an_event['summary'],
                             where_string,
                             an_event['start']['dateTime'],
                             an_event['end']['dateTime'],
                             a_rem['minutes'])
-                debug("new GcEvent occurence: %s" % this_event)
+                debug("new GCalendarAlarm occurence: %s" % this_event)
                 event_list.append(this_event)
     return (True, event_list)
 
-# ----------------------------
-def do_login(calendarservice):
+
+
+#-----------------------------------------------------------------------------#
+# Authentication Functions                                                    #
+#-----------------------------------------------------------------------------#
+
+def do_login():
     """
-    (Re)Login to Google Calendar.
-    This sometimes fails or the connection dies, so do_login() needs to be done again.
+    Authenticates to Google Calendar.
+    Occassionally this fails or the connection dies, so this may need to be called again.
 
-    calendarservice: as returned by get_calendar_service()
-    returns: True or False (logged-in or failed)
-
+    Return:
+        True if authentication succeeded, or False otherwise.
     """
     global cs
 
@@ -296,11 +332,11 @@ def do_login(calendarservice):
         cs = build(serviceName='calendar', version='v3', http=authHttp)
     except Exception as error:
         debug('Failed to authenticate to Google: {0}'.format(error))
-        message('Failed to authenticate to Google')
-        return False
+        message('Failed to authenticate to Google.')
+        return False # Login failed
 
     message('Logged in to Google Calendar')
-    return True # we're logged in
+    return True # We're logged in
 
 # -------------------------------------------------------------------------------------------
 def process_events_thread():
@@ -328,7 +364,7 @@ def process_events_thread():
                 # otherwise, let the event sleep some more
                 # alarm now if the alarm has 'started'
                 if nowunixtime >= e.alarm_time_unix:
-                    e.alarm()
+                    e.trigger_alarm()
                     alarmed_events.append(e)
                 else:
                     debug("not yet: \"%s\" (%s) [now:%d, alarm:%d]" % ( e.title, e.starttime_str, nowunixtime, e.alarm_time_unix ))
@@ -346,11 +382,12 @@ def get_calendar_service():
 
 def update_events_thread():
     """Periodically sync the 'events' list to what's in Google Calendar"""
-    connectionstatus = do_login(cs)
-    while 1:
+    connectionstatus = do_login()
+
+    while True:
         if(not connectionstatus):
             time.sleep(reconnect_sleeptime)
-            connectionstatus = do_login(cs)
+            connectionstatus = do_login()
         else:
             debug("running")
             # today
