@@ -382,10 +382,6 @@ def process_events_thread():
         # We can't just sleep until the next event as the other thread MIGHT add something new
         time.sleep(alarm_sleeptime)
 
-def get_calendar_service():
-    global calendar_service
-    return calendar_service
-
 def update_events_thread():
     """Periodically sync the 'events' list to what's in Google Calendar"""
     connectionstatus = do_login()
