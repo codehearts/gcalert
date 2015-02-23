@@ -77,7 +77,7 @@ __version__ = '2.0'
 __API_CLIENT_ID__ = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
 __API_CLIENT_SECRET__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
-cs = None
+calendar_service = None
 
 
 #-----------------------------------------------------------------------------#
@@ -237,10 +237,9 @@ def stopthismadness(signal, frame):
 # Google Calendar Query Functions                                             #
 #-----------------------------------------------------------------------------#
 
-def date_range_query(calendarservice, start_date=None, end_date=None):
+def date_range_query(start_date=None, end_date=None):
     """
     Get a list of events happening between the given dates in all calendars the user has
-    calendarservice: Calendar Service as returned by get_calendar_service()
     returns: (success, list of events)
 
     Each reminder occurence creates a new event (GCalendarAlarm object).
@@ -249,15 +248,15 @@ def date_range_query(calendarservice, start_date=None, end_date=None):
     event_list    = [] # Our parsed events list
 
     try:
-        feed = calendarservice.calendarList().list().execute()
+        feed = calendar_service.calendarList().list().execute()
 
         # Get the id for each calendar
-        cal_id_list = map(lambda x: x['id'], calendarservice.calendarList().list().execute()['items'])
+        cal_id_list = map(lambda x: x['id'], calendar_service.calendarList().list().execute()['items'])
 
         for cal_id in cal_id_list:
             debug('Processing calendar: {0}'.format(cal_id))
 
-            query = calendarservice.events().list(calendarId=cal_id, timeMin=start_date, timeMax=end_date, singleEvents=True).execute()
+            query = calendar_service.events().list(calendarId=cal_id, timeMin=start_date, timeMax=end_date, singleEvents=True).execute()
             google_events += query['items']
 
             debug('Events so far: {0}'.format(len(google_events)))
@@ -311,7 +310,7 @@ def do_login():
     Return:
         True if authentication succeeded, or False otherwise.
     """
-    global cs
+    global calendar_service
 
     try:
         storage = Storage(secrets_file)
@@ -329,7 +328,7 @@ def do_login():
             )
 
         authHttp = credentials.authorize(httplib2.Http())
-        cs = build(serviceName='calendar', version='v3', http=authHttp)
+        calendar_service = build(serviceName='calendar', version='v3', http=authHttp)
     except Exception as error:
         debug('Failed to authenticate to Google: {0}'.format(error))
         message('Failed to authenticate to Google.')
@@ -341,44 +340,51 @@ def do_login():
 # -------------------------------------------------------------------------------------------
 def process_events_thread():
     """Process events and raise alarms via pynotify"""
-    # initialize notification system
-    if not pynotify.init('gcalert-Calendar_Alerter-%s' % __version__):
-        print "Could not initialize pynotify / libnotify!"
+    # Initialize notification system
+    if not pynotify.init('{0}'.format(__program__+'/'+__version__)):
+        print 'Could not initialize pynotify/libnotify!'
         sys.exit(1)
-    time.sleep(threads_offset) # give a chance for the other thread to get some events
-    while 1:
+
+    time.sleep(threads_offset) # Give a chance for the other thread to get some events
+
+    while True:
         nowunixtime = time.time()
-        debug("running")
+        debug("Running...")
+
         events_lock.acquire()
-        for e in events:
-            if e.starttime_unix < nowunixtime:
-                debug("removing %s, is gone" % e)
+
+        for event in events:
+            if event.starttime_unix < nowunixtime:
+                debug('Removing event `{0}`'.format(event))
                 events.remove(e)
-                # also free up some memory
-                if e in alarmed_events:
-                    alarmed_events.remove(e)
-            # it starts in the future
-            # check for alarm times if it wasn't alarmed yet
-            elif e not in alarmed_events:
-                # check alarm time. If it's now-ish, raise alarm
-                # otherwise, let the event sleep some more
-                # alarm now if the alarm has 'started'
-                if nowunixtime >= e.alarm_time_unix:
-                    e.trigger_alarm()
-                    alarmed_events.append(e)
+
+                # Also free up some memory
+                if event in alarmed_events:
+                    alarmed_events.remove(event)
+            # If it starts in the future, check for alarm times if it wasn't alarmed yet
+            elif event not in alarmed_events:
+                # Check the alarm time. If it's now-ish, raise the alarm,
+                # otherwise let the event sleep some more
+
+                # Alarm now if the alarm has 'started'
+                if nowunixtime >= event.alarm_time_unix:
+                    event.trigger_alarm()
+                    alarmed_events.append(event)
                 else:
-                    debug("not yet: \"%s\" (%s) [now:%d, alarm:%d]" % ( e.title, e.starttime_str, nowunixtime, e.alarm_time_unix ))
+                    debug('Not yet ready to alert for event `{0}`'.format(event))
             else:
-                debug("already alarmed: \"%s\" (%s) [now:%d, alarm:%d]" % ( e.title, e.starttime_str, nowunixtime, e.alarm_time_unix ))
+                debug('Already alerted for event `{0}`'.format(event))
+
         events_lock.release()
-        debug("finished")
-        # we can't just sleep until the next event as the other thread MIGHT
-        # add something new meanwhile
+
+        debug("Finished")
+
+        # We can't just sleep until the next event as the other thread MIGHT add something new
         time.sleep(alarm_sleeptime)
 
 def get_calendar_service():
-    global cs
-    return cs
+    global calendar_service
+    return calendar_service
 
 def update_events_thread():
     """Periodically sync the 'events' list to what's in Google Calendar"""
@@ -394,7 +400,7 @@ def update_events_thread():
             range_start = datetime.datetime.now(dateutil.tz.tzlocal())
             # tommorrow, or later
             range_end = range_start + datetime.timedelta(days=lookahead_days)
-            (connectionstatus,newevents) = date_range_query(cs, range_start.isoformat(), range_end.isoformat())
+            (connectionstatus,newevents) = date_range_query(range_start.isoformat(), range_end.isoformat())
             if connectionstatus: # if we're still logged in, the query was successful and newevents is valid
                 events_lock.acquire()
                 now = time.time()
@@ -527,8 +533,6 @@ if __name__ == '__main__':
     except ValueError:
         print "Option %s requires an integer parameter; use '-h' for help." % o
         sys.exit(1)
-
-    cs = get_calendar_service()
 
     # set up ^C handler
     signal.signal( signal.SIGINT, stopthismadness )
