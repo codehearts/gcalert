@@ -276,7 +276,7 @@ def date_range_query(calendarservice, start_date=None, end_date=None):
         where_string=''
         try:
             # join all 'where' entries together; you probably only have one anyway
-            where_string = ' // '.join(an_event['location'])
+            where_string = an_event['location']
         except KeyError:
             # not all events have 'where' fields, and that's okay
             pass
