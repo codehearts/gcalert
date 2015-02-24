@@ -141,17 +141,19 @@ settings = Settings()
 # Console output functions                                                    #
 #-----------------------------------------------------------------------------#
 
-def message(s):
-    """Prints s and flushes the buffer; useful when redirected to a file."""
+def message(message):
+    """Prints the given message and flushes the buffer; useful when redirected to a file."""
     if not settings.quiet_flag:
-        print '{timestamp} {executable}: {message}'.format(
-            timestamp=time.asctime(), executable=sys.argv[0], message=s)
+        print message
         sys.stdout.flush()
 
-def debug(s):
-    """Prints s if the debug_flag is set (running with -d or --debug)."""
+def debug(message):
+    """Prints the given message if the debug_flag is set (running with -d or --debug)."""
     if settings.debug_flag:
-        message('DEBUG: {function}: {message}'.format(function=sys._getframe(1).f_code.co_name, message=s))
+        print '{timestamp} (DEBUG): in {function}: {message}'.format(
+            timestamp=time.asctime(), executable=sys.argv[0],
+            function=sys._getframe(1).f_code.co_name, message=message)
+        sys.stdout.flush()
 
 #-----------------------------------------------------------------------------#
 # Calendar Alerts Class                                                       #
