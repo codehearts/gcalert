@@ -244,7 +244,7 @@ class GCalendarAlarm(object):
 
     def __str__(self):
         """Returns a string representation of this object's contents."""
-        return 'Title: {title}\nLocation: {location}\nStart: {start}\nAlarm_minutes: {minutes}\n'.format(
+        return 'Title:        {title}\nLocation:     {location}\nStart time:   {start}\nReminder set: {minutes} minutes before\n'.format(
             title    = self.title,
             location = self.where,
             start    = self.starttime_str,
