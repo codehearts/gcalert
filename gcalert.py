@@ -73,16 +73,14 @@ except ImportError as e:
     print '\tsudo apt-get install python-notify python-gdata python-dateutil notification-daemon'
     sys.exit(1)
 
-# -------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------#
+# Global Properties                                                           #
+#-----------------------------------------------------------------------------#
 
 __program__ = 'gcalert'
 __version__ = '2.0'
 __API_CLIENT_ID__     = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
 __API_CLIENT_SECRET__ = 'UECdkOkaoAnyYe5-4DBm31mu'
-
-calendar_service = None
-
-
 
 #-----------------------------------------------------------------------------#
 # Default settings                                                            #
@@ -136,18 +134,28 @@ class Settings(object):
             icon           = self.icon
         )
 
+# Create a global settings instance
 settings = Settings()
 
+#-----------------------------------------------------------------------------#
+# Console output functions                                                    #
+#-----------------------------------------------------------------------------#
 
+def message(s):
+    """Prints s and flushes the buffer; useful when redirected to a file."""
+    if not settings.quiet_flag:
+        print '{timestamp} {executable}: {message}'.format(
+            timestamp=time.asctime(), executable=sys.argv[0], message=s)
+        sys.stdout.flush()
+
+def debug(s):
+    """Prints s if the debug_flag is set (running with -d or --debug)."""
+    if settings.debug_flag:
+        message('DEBUG: {function}: {message}'.format(function=sys._getframe(1).f_code.co_name, message=s))
 
 #-----------------------------------------------------------------------------#
 # Calendar Alerts Class                                                       #
 #-----------------------------------------------------------------------------#
-
-events = [] # all events seen so far that are yet to start
-events_lock = thread.allocate_lock() # hold to access events[]
-alerted_events = [] # Events (occurrences, etc) already notified about
-connected = False # Google connection is disconnected
 
 class GCalendarAlarm(object):
     """Represents an instance of a calendar alarm for an event."""
@@ -245,251 +253,307 @@ class GCalendarAlarm(object):
 
 
 #-----------------------------------------------------------------------------#
-# Console output functions                                                    #
+# GCalert Class                                                               #
+# The main thread will start up and then launch the background alerts thread, #
+# and proceed check the calendar every so often                               #
 #-----------------------------------------------------------------------------#
 
-def message(s):
-    """Prints s and flushes the buffer; useful when redirected to a file."""
-    if not settings.quiet_flag:
-        print '{timestamp} {executable}: {message}'.format(
-            timestamp=time.asctime(), executable=sys.argv[0], message=s)
-        sys.stdout.flush()
+class GCalert(object):
+    """Connects to Google Calendar and notifies about events at their reminder time."""
 
-def debug(s):
-    """Prints s if the debug_flag is set (running with -d or --debug)."""
-    if settings.debug_flag:
-        message('DEBUG: {function}: {message}'.format(function=sys._getframe(1).f_code.co_name, message=s))
+    def __init__(self):
+        super(GCalert, self).__init__()
 
+        # Set GCalert properties
+        self.events = [] # all events seen so far that are yet to start
+        self.events_lock = thread.allocate_lock() # hold to access events[]
+        self.alerted_events = [] # Events (occurrences, etc) already notified about
+        self.calendar_service = None
 
+        # Handle arguments to the program
+        self.handle_program_arguments()
 
-#-----------------------------------------------------------------------------#
-# Signal Handlers                                                             #
-# Signal handlers are easier than wrapping everything in a giant try/except.  #
-# Additionally, we have 2 threads that we need to shut down                   #
-#-----------------------------------------------------------------------------#
+        # Set up ^C handler
+        signal.signal(signal.SIGINT, self.stopthismadness)
 
-def stopthismadness(signal, frame):
-    """Halts execution and exits. Intended for SIGINT (^C)."""
-    message('Shutting down on SIGINT.')
-    sys.exit(0)
+        # Start up the event processing thread
+        debug('Starting event processing thread')
+        thread.start_new_thread(self.process_events_thread, ())
 
+        # Start up
+        message('{0} {1} running...'.format(__program__, __version__))
+        debug('Settings: {0}'.format(settings))
 
+        self.update_events_thread()
 
-#-----------------------------------------------------------------------------#
-# Google Calendar Query Functions                                             #
-#-----------------------------------------------------------------------------#
+    #-----------------------------------------------------------------------------#
+    # Google Calendar Query Functions                                             #
+    #-----------------------------------------------------------------------------#
 
-def date_range_query(start_date=None, end_date=None):
-    """
-    Get a list of events happening between the given dates in all calendars the user has
-    Each reminder occurrence creates a new event (GCalendarAlarm object).
+    def date_range_query(self, start_date=None, end_date=None):
+        """
+        Get a list of events happening between the given dates in all calendars the user has
+        Each reminder occurrence creates a new event (GCalendarAlarm object).
 
-    Returns:
-        A tuple in the format (<success boolean>, <list of events>).
-    """
-    google_events = [] # Events in all Google Calendars
-    event_list    = [] # Our parsed events list
-
-    try:
-        feed = calendar_service.calendarList().list().execute()
-
-        # Get the id for each calendar
-        cal_id_list = map(lambda x: x['id'], calendar_service.calendarList().list().execute()['items'])
-
-        for cal_id in cal_id_list:
-            debug('Processing calendar: {0}'.format(cal_id))
-
-            query = calendar_service.events().list(calendarId=cal_id, timeMin=start_date, timeMax=end_date, singleEvents=True).execute()
-            google_events += query['items']
-
-            debug('Events so far: {0}'.format(len(google_events)))
-    except Exception as error: # FIXME clearer
-        debug('Connection lost: {0}.'.format(error))
+        Returns:
+            A tuple in the format (<success boolean>, <list of events>).
+        """
+        google_events = [] # Events in all Google Calendars
+        event_list    = [] # Our parsed events list
 
         try:
-            message('Connection lost ({0} {1}), will reconnect.'.format(error.args[0]['status'], error.args[0]['reason']))
-        except Exception:
-            message('Connection lost with unknown error, will reconnect: {0}'.format(error))
-            message('Please report this as a bug.')
+            feed = self.calendar_service.calendarList().list().execute()
 
-        return (False, [])
+            # Get the id for each calendar
+            cal_ids = map(lambda x: x['id'], self.calendar_service.calendarList().list().execute()['items'])
 
-    for an_event in google_events:
-        where_string=''
+            for cal_id in cal_ids:
+                debug('Processing calendar: {0}'.format(cal_id))
+
+                query = self.calendar_service.events().list(calendarId=cal_id, timeMin=start_date, timeMax=end_date, singleEvents=True).execute()
+                google_events += query['items']
+
+                debug('Events so far: {0}'.format(len(google_events)))
+        except Exception as error:
+            debug('Connection lost: {0}.'.format(error))
+
+            try:
+                message('Connection lost ({0} {1}), will reconnect.'.format(error.args[0]['status'], error.args[0]['reason']))
+            except Exception:
+                message('Connection lost with unknown error, will reconnect: {0}'.format(error))
+                message('Please report this as a bug.')
+
+            return (False, [])
+
+        for event in google_events:
+            where = ''
+            try:
+                where = event['location']
+            except KeyError:
+                pass # Not all events have 'where' fields, and that's okay
+
+            # Create a GCalendarAlarm out of each (event x reminder x occurrence)
+            for reminder in event['reminders']['overrides']:
+                debug('Google event TEXT: {0} METHOD: {1}'.format(event['summary'], reminder['method']))
+
+                if reminder['method'] == 'popup': # 'popup' in the web interface
+                    # Event (one for each alarm instance) is done, add it to the list
+                    this_event = GCalendarAlarm(
+                        event['summary'],
+                        where,
+                        event['start']['dateTime'],
+                        event['end']['dateTime'],
+                        reminder['minutes'])
+
+                    debug('New GCalendarAlarm instance: {0}'.format(this_event))
+
+                    event_list.append(this_event)
+
+        return (True, event_list)
+
+    #-----------------------------------------------------------------------------#
+    # Authentication Functions                                                    #
+    #-----------------------------------------------------------------------------#
+
+    def do_login(self):
+        """
+        Authenticates to Google Calendar.
+        Occassionally this fails or the connection dies, so this may need to be called again.
+
+        Return:
+            True if authentication succeeded, or False otherwise.
+        """
         try:
-            # Join all 'where' entries together; you probably only have one anyway
-            where_string = an_event['location']
-        except KeyError:
-            # Not all events have 'where' fields, and that's okay
-            pass
+            storage = Storage(settings.secrets_file)
+            credentials = storage.get()
 
-        # Create a GCalendarAlarm out of each (event x reminder x occurrence)
-        for a_rem in an_event['reminders']['overrides']:
-            debug("google event TEXT: %s METHOD: %s" % (an_event['summary'], a_rem) )
-            if a_rem['method'] == 'popup': # 'popup' in the web interface
-                # Event (one for each alarm instance) is done, add it to the list
-                this_event=GCalendarAlarm(
-                            an_event['summary'],
-                            where_string,
-                            an_event['start']['dateTime'],
-                            an_event['end']['dateTime'],
-                            a_rem['minutes'])
-                debug("new GCalendarAlarm occurence: %s" % this_event)
-                event_list.append(this_event)
+            if credentials is None or credentials.invalid:
+                flow = OAuth2WebServerFlow(
+                    client_id     = __API_CLIENT_ID__,
+                    client_secret = __API_CLIENT_SECRET__,
+                    user_agent    = __program__+'/'+__version__,
+                    redirect_uri  = 'urn:ietf:wg:oauth:2.0:oob:auto',
+                    scope         = 'https://www.googleapis.com/auth/calendar')
 
-    return (True, event_list)
+                parser = argparse.ArgumentParser(
+                    formatter_class = argparse.RawDescriptionHelpFormatter,
+                    parents         = [tools.argparser])
 
+                # Parse the command-line flags
+                flags = parser.parse_args(sys.argv[1:])
 
+                credentials = run_flow(flow, storage, flags)
 
-#-----------------------------------------------------------------------------#
-# Authentication Functions                                                    #
-#-----------------------------------------------------------------------------#
+            auth_http = credentials.authorize(httplib2.Http())
+            self.calendar_service = build(serviceName='calendar', version='v3', http=auth_http)
+        except Exception as error:
+            debug('Failed to authenticate to Google: {0}'.format(error))
+            message('Failed to authenticate to Google.')
+            return False # Login failed
 
-def do_login():
-    """
-    Authenticates to Google Calendar.
-    Occassionally this fails or the connection dies, so this may need to be called again.
+        message('Logged in to Google Calendar')
+        return True # We're logged in
 
-    Return:
-        True if authentication succeeded, or False otherwise.
-    """
-    global calendar_service
+    #-----------------------------------------------------------------------------#
+    # Event Thread Handlers                                                       #
+    #-----------------------------------------------------------------------------#
 
-    try:
-        storage = Storage(settings.secrets_file)
-        credentials = storage.get()
+    def process_events_thread(self):
+        """Process events and raise alarms via pynotify."""
+        # Initialize notification system
+        if not pynotify.init('{0}'.format(__program__+'/'+__version__)):
+            print 'Could not initialize pynotify/libnotify!'
+            sys.exit(1)
 
-        if credentials is None or credentials.invalid:
-            flow = OAuth2WebServerFlow(
-                client_id     = __API_CLIENT_ID__,
-                client_secret = __API_CLIENT_SECRET__,
-                user_agent    = __program__+'/'+__version__,
-                redirect_uri  = 'urn:ietf:wg:oauth:2.0:oob:auto',
-                scope         = 'https://www.googleapis.com/auth/calendar')
+        time.sleep(settings.threads_offset) # Give a chance for the other thread to get some events
 
-            parser = argparse.ArgumentParser(
-                formatter_class = argparse.RawDescriptionHelpFormatter,
-                parents         = [tools.argparser])
+        while True:
+            nowunixtime = time.time()
+            debug('Processing events thread...')
 
-            # Parse the command-line flags
-            flags = parser.parse_args(sys.argv[1:])
+            self.events_lock.acquire()
 
-            credentials = run_flow(flow, storage, flags)
+            for event in self.events:
+                if event.starttime_unix < nowunixtime:
+                    debug('Removing event `{0}`'.format(event))
+                    self.events.remove(e)
 
-        auth_http = credentials.authorize(httplib2.Http())
-        calendar_service = build(serviceName='calendar', version='v3', http=auth_http)
-    except Exception as error:
-        debug('Failed to authenticate to Google: {0}'.format(error))
-        message('Failed to authenticate to Google.')
-        return False # Login failed
+                    # Also free up some memory
+                    if event in self.alerted_events:
+                        self.alerted_events.remove(event)
+                # If it starts in the future, check for alarm times if it wasn't alarmed yet
+                elif event not in self.alerted_events:
+                    # Check the alarm time. If it's now-ish, raise the alarm,
+                    # otherwise let the event sleep some more
 
-    message('Logged in to Google Calendar')
-    return True # We're logged in
-
-
-
-#-----------------------------------------------------------------------------#
-# Event Thread Handlers                                                       #
-#-----------------------------------------------------------------------------#
-
-def process_events_thread():
-    """Process events and raise alarms via pynotify."""
-    # Initialize notification system
-    if not pynotify.init('{0}'.format(__program__+'/'+__version__)):
-        print 'Could not initialize pynotify/libnotify!'
-        sys.exit(1)
-
-    time.sleep(settings.threads_offset) # Give a chance for the other thread to get some events
-
-    while True:
-        nowunixtime = time.time()
-        debug("Processing events thread...")
-
-        events_lock.acquire()
-
-        for event in events:
-            if event.starttime_unix < nowunixtime:
-                debug('Removing event `{0}`'.format(event))
-                events.remove(e)
-
-                # Also free up some memory
-                if event in alerted_events:
-                    alerted_events.remove(event)
-            # If it starts in the future, check for alarm times if it wasn't alarmed yet
-            elif event not in alerted_events:
-                # Check the alarm time. If it's now-ish, raise the alarm,
-                # otherwise let the event sleep some more
-
-                # Alarm now if the alarm has 'started'
-                if nowunixtime >= event.alarm_time_unix:
-                    event.trigger_alarm()
-                    alerted_events.append(event)
+                    # Alarm now if the alarm has 'started'
+                    if nowunixtime >= event.alarm_time_unix:
+                        event.trigger_alarm()
+                        self.alerted_events.append(event)
+                    else:
+                        debug('Not yet ready to alert for event `{0}`'.format(event))
                 else:
-                    debug('Not yet ready to alert for event `{0}`'.format(event))
+                    debug('Already alerted for event `{0}`'.format(event))
+
+            self.events_lock.release()
+
+            debug('Finished')
+
+            # We can't just sleep until the next event as the other thread MIGHT add something new
+            time.sleep(settings.alarm_sleeptime)
+
+    def update_events_thread(self):
+        """Periodically syncs the 'events' list to what's in Google Calendar."""
+        connection_status = self.do_login()
+
+        while True:
+            if not connection_status:
+                time.sleep(settings.reconnect_sleeptime)
+                connection_status = self.do_login()
             else:
-                debug('Already alerted for event `{0}`'.format(event))
+                debug('Updating events thread...')
 
-        events_lock.release()
+                # Today
+                range_start = datetime.datetime.now(dateutil.tz.tzlocal())
+                # Tomorrow, or later
+                range_end = range_start + datetime.timedelta(days=settings.lookahead_days)
 
-        debug("Finished")
+                (connection_status, new_events) = self.date_range_query(range_start.isoformat(), range_end.isoformat())
 
-        # We can't just sleep until the next event as the other thread MIGHT add something new
-        time.sleep(settings.alarm_sleeptime)
+                if connection_status: # If we're still logged in, the query was successful and `new_events` is valid
+                    self.events_lock.acquire()
+                    now = time.time()
 
-def update_events_thread():
-    """Periodically syncs the 'events' list to what's in Google Calendar."""
-    connection_status = do_login()
+                    # Remove stale events, if the new event list is valid
+                    for event in self.events:
+                        if not event in new_events:
+                            debug('Event deleted or modified: `{0}`'.format(event))
+                            self.events.remove(event)
 
-    while True:
-        if not connection_status:
-            time.sleep(settings.reconnect_sleeptime)
-            connection_status = do_login()
-        else:
-            debug("Updating events thread...")
+                    # Add new events to the list
+                    for event in new_events:
+                        debug('Is new event really new? `{0}`'.format(event))
 
-            # Today
-            range_start = datetime.datetime.now(dateutil.tz.tzlocal())
-            # Tomorrow, or later
-            range_end = range_start + datetime.timedelta(days=settings.lookahead_days)
+                        if not event in self.events:
+                            debug('Event not seen before: {0}'.format(event))
 
-            (connection_status, new_events) = date_range_query(range_start.isoformat(), range_end.isoformat())
+                            # Does it start in the future?
+                            if now < event.starttime_unix:
+                                debug('-> future, adding')
+                                self.events.append(event)
+                            else:
+                                debug('-> past already')
 
-            if connection_status: # If we're still logged in, the query was successful and `new_events` is valid
-                events_lock.acquire()
+                    self.events_lock.release()
 
-                now = time.time()
+                debug('Finished')
+                time.sleep(settings.query_sleeptime)
 
-                # Remove stale events, if the new event list is valid
-                for event in events:
-                    if not event in new_events:
-                        debug('Event deleted or modified: `{0}`'.format(event))
-                        events.remove(event)
+    #-----------------------------------------------------------------------------#
+    # Command Line Argument Handling                                              #
+    #-----------------------------------------------------------------------------#
 
-                # Add new events to the list
-                for event in new_events:
-                    debug('Is new event really new? `{0}`'.format(event))
-                    if not event in events:
-                        debug('Event not seen before: {0}'.format(event))
-                        # Does it start in the future?
-                        if now < event.starttime_unix:
-                            debug("-> future, adding")
-                            events.append(event)
-                        else:
-                            debug("-> past already")
+    def handle_program_arguments(self):
+        try:
+            opts, args = getopt.getopt(sys.argv[1:], 'hdus:q:a:l:r:t:i:', ['help', 'debug', 'quiet', 'secret=', 'query=', 'alarm=', 'look=', 'retry=', 'timeformat=', 'icon='])
+        except getopt.GetoptError as err:
+            # Print help information and exit:
+            print str(err) # Will print something like "option -a not recognized"
+            sys.exit(2)
 
-                events_lock.release()
+        try:
+            for o, a in opts:
+                if o == '-d':
+                    settings.debug_flag = True
+                elif o in ('-h', '--help'):
+                    usage()
+                    sys.exit()
+                elif o in ('-u', '--quiet'):
+                    settings.quiet_flag = True
+                elif o in ('-s', '--secret'):
+                    settings.secrets_file = a
+                    debug('Secrets file set to {0}'.format(settings.secrets_file))
+                elif o in ('-q', '--query'):
+                    settings.query_sleeptime = max(intval(a), 5)
+                    debug('Query sleep time set to {0}'.format(settings.query_sleeptime))
+                elif o in ('-a', '--alarm'):
+                    settings.alarm_sleeptime = int(a)
+                    debug('Alarm sleep time set to {0}'.format(settings.alarm_sleeptime))
+                elif o in ('-l', "--look"):
+                    settings.lookahead_days = int(a)
+                    debug('Lookahead days set to {0}'.format(settings.lookahead_days))
+                elif o in ('-r', '--retry'):
+                    settings.reconnect_sleeptime = int(a)
+                    debug('Reconnect sleep time set to {0}'.format(settings.reconnect_sleeptime))
+                elif o in ('-t', '--timeformat'):
+                    settings.strftime_string = a
+                    debug("strftime format string set to {0}".format(settings.strftime_string))
+                elif o in ('-i', '--icon'):
+                    settings.icon = a
+                    debug('Icon set to {0}'.format(settings.icon))
+                else:
+                    assert False, 'Unsupported argument'
+        except ValueError:
+            message('Option {0} requires an integer parameter; use \'-h\' for help.'.format(o))
+            sys.exit(1)
 
-            debug("Finished")
-            time.sleep(settings.query_sleeptime)
+    #-----------------------------------------------------------------------------#
+    # Signal Handlers                                                             #
+    # Signal handlers are easier than wrapping everything in a giant try/except.  #
+    # Additionally, we have 2 threads that we need to shut down                   #
+    #-----------------------------------------------------------------------------#
 
+    def stopthismadness(self, signal, frame):
+        """Halts execution and exits. Intended for SIGINT (^C)."""
+        message('Shutting down on SIGINT.')
+        sys.exit(0)
 
+    #-----------------------------------------------------------------------------#
+    # Usage instructions                                                          #
+    #-----------------------------------------------------------------------------#
 
-#-----------------------------------------------------------------------------#
-# Usage instructions                                                          #
-#-----------------------------------------------------------------------------#
-
-def usage():
-    print('''gcalert {version} - Polls Google Calendar and displays reminder notifications for events.
+    def usage(self):
+        print('''gcalert {version} - Polls Google Calendar and displays reminder notifications for events.
 
 Usage: {executable} [options]
 
@@ -530,80 +594,24 @@ Usage: {executable} [options]
 --icon icon_name
            Sets the icon displayed in alarm notifications.
            (Default: {default_icon})
-        '''.format(
-            version            = __version__,
-            executable         = sys.argv[0],
-            default_secret     = '~/' + secrets_filename,
-            default_query      = settings.query_sleeptime,
-            default_alarm      = settings.alarm_sleeptime,
-            default_look       = settings.lookahead_days,
-            default_retry      = settings.reconnect_sleeptime,
-            default_timeformat = settings.strftime_string,
-            default_icon       = settings.con
+            '''.format(
+                version            = __version__,
+                executable         = sys.argv[0],
+                default_secret     = settings.secrets_filename,
+                default_query      = settings.query_sleeptime,
+                default_alarm      = settings.alarm_sleeptime,
+                default_look       = settings.lookahead_days,
+                default_retry      = settings.reconnect_sleeptime,
+                default_timeformat = settings.strftime_string,
+                default_icon       = settings.con
+            )
         )
-    )
 
 
 
 #-----------------------------------------------------------------------------#
-# Main thread                                                                 #
-# The main thread will start up and then launch the background alerts thread, #
-# and proceed check the calendar every so often                               #
+# Let's get started!                                                          #
 #-----------------------------------------------------------------------------#
 
 if __name__ == '__main__':
-    try:
-        opts, args = getopt.getopt(sys.argv[1:], 'hdus:q:a:l:r:t:i:', ['help', 'debug', 'quiet', 'secret=', 'query=', 'alarm=', 'look=', 'retry=', 'timeformat=', 'icon='])
-    except getopt.GetoptError as err:
-        # Print help information and exit:
-        print str(err) # Will print something like "option -a not recognized"
-        sys.exit(2)
-
-    try:
-        for o, a in opts:
-            if o == '-d':
-                settings.debug_flag = True
-            elif o in ('-h', '--help'):
-                usage()
-                sys.exit()
-            elif o in ('-u', '--quiet'):
-                settings.quiet_flag = True
-            elif o in ('-s', '--secret'):
-                settings.secrets_file = a
-                debug('Secrets file set to {0}'.format(settings.secrets_file))
-            elif o in ('-q', '--query'):
-                settings.query_sleeptime = max(intval(a), 5)
-                debug('Query sleep time set to {0}'.format(settings.query_sleeptime))
-            elif o in ('-a', '--alarm'):
-                settings.alarm_sleeptime = int(a)
-                debug('Alarm sleep time set to {0}'.format(settings.alarm_sleeptime))
-            elif o in ('-l', "--look"):
-                settings.lookahead_days = int(a)
-                debug('Lookahead days set to {0}'.format(settings.lookahead_days))
-            elif o in ('-r', '--retry'):
-                settings.reconnect_sleeptime = int(a)
-                debug('Reconnect sleep time set to {0}'.format(settings.reconnect_sleeptime))
-            elif o in ('-t', '--timeformat'):
-                settings.strftime_string = a
-                debug("strftime format string set to {0}".format(settings.strftime_string))
-            elif o in ('-i', '--icon'):
-                settings.icon = a
-                debug('Icon set to {0}'.format(settings.icon))
-            else:
-                assert False, 'Unsupported option'
-    except ValueError:
-        print 'Option {0} requires an integer parameter; use \'-h\' for help.'.format(o)
-        sys.exit(1)
-
-    # Set up ^C handler
-    signal.signal(signal.SIGINT, stopthismadness)
-
-    # Start up the event processing thread
-    debug('Starting event processing thread')
-    thread.start_new_thread(process_events_thread, ())
-
-    # Start up
-    message('{0} {1} running...'.format(__program__, __version__))
-    debug('Settings: {0}'.format(settings))
-
-    update_events_thread()
+    GCalert()
