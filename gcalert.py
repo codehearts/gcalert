@@ -46,17 +46,17 @@ import thread
 import signal
 import datetime
 
-# dependencies below come from separate packages, the rest (above) is in the
+# Dependencies below come from separate packages, the rest (above) are in the
 # standard library so those are expected to work :)
 try:
-    # google calendar stuff
+    # Google calendar stuff
     import gdata.calendar.service
     import gdata.calendar.client
     import gdata.service
     import gdata.calendar
     # libnotify handler
     import pynotify
-    # magical date parser and timezone handler
+    # Date parser and timezone handler
     import dateutil.tz
     import dateutil.parser
     # For Google Calendar API v3
@@ -78,6 +78,7 @@ __API_CLIENT_ID__ = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleus
 __API_CLIENT_SECRET__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
 calendar_service = None
+
 
 
 #-----------------------------------------------------------------------------#
@@ -137,7 +138,7 @@ settings = Settings()
 
 events = [] # all events seen so far that are yet to start
 events_lock = thread.allocate_lock() # hold to access events[]
-alarmed_events = [] # events (occurences etc) already alarmed
+alerted_events = [] # Events (occurrences, etc) already notified about
 connected = False # Google connection is disconnected
 
 class GCalendarAlarm(object):
@@ -273,9 +274,10 @@ def stopthismadness(signal, frame):
 def date_range_query(start_date=None, end_date=None):
     """
     Get a list of events happening between the given dates in all calendars the user has
-    returns: (success, list of events)
+    Each reminder occurrence creates a new event (GCalendarAlarm object).
 
-    Each reminder occurence creates a new event (GCalendarAlarm object).
+    Returns:
+        A tuple in the format (<success boolean>, <list of events>).
     """
     google_events = [] # Events in all Google Calendars
     event_list    = [] # Our parsed events list
@@ -307,18 +309,17 @@ def date_range_query(start_date=None, end_date=None):
     for an_event in google_events:
         where_string=''
         try:
-            # join all 'where' entries together; you probably only have one anyway
+            # Join all 'where' entries together; you probably only have one anyway
             where_string = an_event['location']
         except KeyError:
-            # not all events have 'where' fields, and that's okay
+            # Not all events have 'where' fields, and that's okay
             pass
 
-        # make a GCalendarAlarm out of each (event x reminder x occurence)
+        # Create a GCalendarAlarm out of each (event x reminder x occurrence)
         for a_rem in an_event['reminders']['overrides']:
             debug("google event TEXT: %s METHOD: %s" % (an_event['summary'], a_rem) )
             if a_rem['method'] == 'popup': # 'popup' in the web interface
-                # event (one for each alarm instance) is done,
-                # add it to the list
+                # Event (one for each alarm instance) is done, add it to the list
                 this_event=GCalendarAlarm(
                             an_event['summary'],
                             where_string,
@@ -327,6 +328,7 @@ def date_range_query(start_date=None, end_date=None):
                             a_rem['minutes'])
                 debug("new GCalendarAlarm occurence: %s" % this_event)
                 event_list.append(this_event)
+
     return (True, event_list)
 
 
@@ -370,9 +372,14 @@ def do_login():
     message('Logged in to Google Calendar')
     return True # We're logged in
 
-# -------------------------------------------------------------------------------------------
+
+
+#-----------------------------------------------------------------------------#
+# Event Thread Handlers                                                       #
+#-----------------------------------------------------------------------------#
+
 def process_events_thread():
-    """Process events and raise alarms via pynotify"""
+    """Process events and raise alarms via pynotify."""
     # Initialize notification system
     if not pynotify.init('{0}'.format(__program__+'/'+__version__)):
         print 'Could not initialize pynotify/libnotify!'
@@ -392,17 +399,17 @@ def process_events_thread():
                 events.remove(e)
 
                 # Also free up some memory
-                if event in alarmed_events:
-                    alarmed_events.remove(event)
+                if event in alerted_events:
+                    alerted_events.remove(event)
             # If it starts in the future, check for alarm times if it wasn't alarmed yet
-            elif event not in alarmed_events:
+            elif event not in alerted_events:
                 # Check the alarm time. If it's now-ish, raise the alarm,
                 # otherwise let the event sleep some more
 
                 # Alarm now if the alarm has 'started'
                 if nowunixtime >= event.alarm_time_unix:
                     event.trigger_alarm()
-                    alarmed_events.append(event)
+                    alerted_events.append(event)
                 else:
                     debug('Not yet ready to alert for event `{0}`'.format(event))
             else:
@@ -416,7 +423,7 @@ def process_events_thread():
         time.sleep(settings.alarm_sleeptime)
 
 def update_events_thread():
-    """Periodically syncs the 'events' list to what's in Google Calendar"""
+    """Periodically syncs the 'events' list to what's in Google Calendar."""
     connection_status = do_login()
 
     while True:
@@ -522,17 +529,19 @@ Usage: {executable} [options]
     )
 
 
-if __name__ == '__main__':
-    # -------------------------------------------------------------------------------------------
-    # the main thread will start up, then launch the background 'alarmer' thread,
-    # and proceed check the calendar every so often
-    #
 
+#-----------------------------------------------------------------------------#
+# Main thread                                                                 #
+# The main thread will start up and then launch the background alerts thread, #
+# and proceed check the calendar every so often                               #
+#-----------------------------------------------------------------------------#
+
+if __name__ == '__main__':
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hdus:q:a:l:r:t:i:", ["help", "debug", "quiet", "secret=", "query=", "alarm=", "look=", "retry=", "timeformat=", "icon="])
+        opts, args = getopt.getopt(sys.argv[1:], 'hdus:q:a:l:r:t:i:', ['help', 'debug', 'quiet', 'secret=', 'query=', 'alarm=', 'look=', 'retry=', 'timeformat=', 'icon='])
     except getopt.GetoptError as err:
-        # print help information and exit:
-        print str(err) # will print something like "option -a not recognized"
+        # Print help information and exit:
+        print str(err) # Will print something like "option -a not recognized"
         sys.exit(2)
 
     try:
@@ -578,7 +587,7 @@ if __name__ == '__main__':
     debug('Starting event processing thread')
     thread.start_new_thread(process_events_thread, ())
 
-    # starting up
+    # Start up
     message('{0} {1} running...'.format(__program__, __version__))
     debug('Settings: {0}'.format(settings))
 
