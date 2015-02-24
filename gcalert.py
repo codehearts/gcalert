@@ -68,8 +68,9 @@ try:
     from oauth2client.client import OAuth2WebServerFlow
     from oauth2client.tools import run_flow
 except ImportError as e:
-    print 'Dependency was not found! {0}'.format(e)
-    print "(Try: sudo apt-get install python-notify python-gdata python-dateutil notification-daemon)"
+    print 'Dependency was not found! {0}\n'.format(e)
+    print 'For Debian/Ubuntu, try:'
+    print '\tsudo apt-get install python-notify python-gdata python-dateutil notification-daemon'
     sys.exit(1)
 
 # -------------------------------------------------------------------------------------------
