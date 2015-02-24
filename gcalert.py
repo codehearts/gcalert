@@ -88,6 +88,17 @@ __API_CLIENT_SECRET__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
 class Settings(object):
     """Stores all settings for this gcalert instance."""
+    # Text colors
+    purple_text    = '\033[95m'
+    cyan_text      = '\033[96m'
+    darkcyan_text  = '\033[36m'
+    blue_text      = '\033[94m'
+    green_text     = '\033[92m'
+    yellow_text    = '\033[93m'
+    red_text       = '\033[91m'
+    bold_text      = '\033[1m'
+    underline_text = '\033[4m'
+    normal_text    = '\033[0m'
 
     def __init__(self):
         super(Settings, self).__init__()
@@ -216,7 +227,9 @@ class GCalendarAlarm(object):
 
     def trigger_alarm(self):
         """Show the alarm box for one event/recurrence"""
-        message(" ***** ALARM ALARM ALARM: {0} ****  ".format(self))
+        message(settings.bold_text+'\n##### ALARM #####'+settings.normal_text)
+        message('\n{0}'.format(self))
+        message(settings.bold_text+'##### ALARM #####\n'+settings.normal_text)
 
         if self.where:
             a = pynotify.Notification(self.title, '<b>Starting:</b> {start}\n<b>Where:</b> {location}'.format(start=self.starttime_str, location=self.where), settings.icon)
@@ -231,7 +244,7 @@ class GCalendarAlarm(object):
 
     def __str__(self):
         """Returns a string representation of this object's contents."""
-        return 'Title: {title}, Location: {location}, Start: {start}, Alarm_minutes: {minutes}'.format(
+        return 'Title: {title}\nLocation: {location}\nStart: {start}\nAlarm_minutes: {minutes}\n'.format(
             title    = self.title,
             location = self.where,
             start    = self.starttime_str,
