@@ -74,7 +74,7 @@ except ImportError as e:
 
 __program__ = 'gcalert'
 __version__ = '2.0'
-__API_CLIENT_ID__ = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
+__API_CLIENT_ID__     = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
 __API_CLIENT_SECRET__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
 calendar_service = None
@@ -90,8 +90,9 @@ class Settings(object):
 
     def __init__(self):
         super(Settings, self).__init__()
+        self.config_directory    = os.path.expanduser('~/.config/gcalert/')
         self.secrets_filename    = '.gcalert_oauth'
-        self.secrets_file        = os.path.join(os.environ['HOME'], self.secrets_filename)
+        self.secrets_file        = os.path.join(self.config_directory, self.secrets_filename)
         self.alarm_sleeptime     = 30                # Seconds between waking up to check the alarm list
         self.query_sleeptime     = 180               # Seconds between querying for new events
         self.lookahead_days      = 3                 # Look this many days in the future
@@ -101,6 +102,10 @@ class Settings(object):
         self.threads_offset      = 5                 # Offset between the two threads' runs, in seconds
         self.strftime_string     = '%Y-%m-%d  %H:%M' # String to format times with
         self.icon                = 'gtk-dialog-info' # Icon to use in notifications
+
+        # Create the config directory if it doesn't already exist
+        if not os.path.exists(self.config_directory):
+            os.makedirs(self.config_directory)
 
     def __str__(self):
         """Returns a string representation of the settings."""
