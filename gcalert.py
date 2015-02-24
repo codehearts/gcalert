@@ -84,17 +84,50 @@ calendar_service = None
 # Default settings                                                            #
 #-----------------------------------------------------------------------------#
 
-secrets_filename    = '.gcalert_oauth'
-secrets_file        = os.path.join(os.environ['HOME'], secrets_filename)
-alarm_sleeptime     = 30 # Seconds between waking up to check the alarm list
-query_sleeptime     = 180 # Seconds between querying for new events
-lookahead_days      = 3 # Look this many days in the future
-debug_flag          = False # Display debug messages
-quiet_flag          = False # Suppresses all non-debug messages
-reconnect_sleeptime = 300 # Seconds between reconnects in case of errors
-threads_offset      = 5 # Offset between the two threads' runs, in seconds
-strftime_string     = '%Y-%m-%d  %H:%M' # String to format times with
-icon                = 'gtk-dialog-info' # Icon to use in notifications
+class Settings(object):
+    """Stores all settings for this gcalert instance."""
+
+    def __init__(self):
+        super(Settings, self).__init__()
+        self.secrets_filename    = '.gcalert_oauth'
+        self.secrets_file        = os.path.join(os.environ['HOME'], self.secrets_filename)
+        self.alarm_sleeptime     = 30                # Seconds between waking up to check the alarm list
+        self.query_sleeptime     = 180               # Seconds between querying for new events
+        self.lookahead_days      = 3                 # Look this many days in the future
+        self.debug_flag          = False             # Display debug messages
+        self.quiet_flag          = False             # Suppresses all non-debug messages
+        self.reconnect_sleeptime = 300               # Seconds between reconnects in case of errors
+        self.threads_offset      = 5                 # Offset between the two threads' runs, in seconds
+        self.strftime_string     = '%Y-%m-%d  %H:%M' # String to format times with
+        self.icon                = 'gtk-dialog-info' # Icon to use in notifications
+
+    def __str__(self):
+        """Returns a string representation of the settings."""
+        return '''
+            Secrets file:         {secrets_file}
+            Alarm sleep time:     {alarm_time}
+            Query sleep time:     {query_time}
+            Lookahead days:       {lookahead}
+            Debug:                {debug}
+            Quiet:                {quiet}
+            Reconnect sleep time: {reconnect_time}
+            Thread offset:        {thread_offset}
+            strftime format:      {strftime_str}
+            Icon:                 {icon}
+        '''.format(
+            secrets_file   = self.secrets_file,
+            alarm_time     = self.alarm_sleeptime,
+            query_time     = self.query_sleeptime,
+            lookahead      = self.lookahead_days,
+            debug          = self.debug_flag,
+            quiet          = self.quiet_flag,
+            reconnect_time = self.reconnect_sleeptime,
+            thread_offset  = self.threads_offset,
+            strftime_str   = self.strftime_string,
+            icon           = self.icon
+        )
+
+settings = Settings()
 
 
 
@@ -145,12 +178,12 @@ class GCalendarAlarm(object):
     @property
     def starttime_str(self):
         """Returns a string representing the start time (in the local timezone) of the event."""
-        return self.start.astimezone(dateutil.tz.tzlocal()).strftime(strftime_string)
+        return self.start.astimezone(dateutil.tz.tzlocal()).strftime(settings.strftime_string)
 
     @property
     def endtime_str(self):
         """Returns a string representing the end time (in the local timezone) of the event."""
-        return self.end.astimezone(dateutil.tz.tzlocal()).strftime(strftime_string)
+        return self.end.astimezone(dateutil.tz.tzlocal()).strftime(settings.strftime_string)
 
     @property
     def starttime_unix(self):
@@ -167,9 +200,9 @@ class GCalendarAlarm(object):
         message(" ***** ALARM ALARM ALARM: {0} ****  ".format(self))
 
         if self.where:
-            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}\n<b>Where:</b> {location}'.format(start=self.starttime_str, location=self.where), icon)
+            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}\n<b>Where:</b> {location}'.format(start=self.starttime_str, location=self.where), settings.icon)
         else:
-            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}'.format(start=self.starttime_str), icon)
+            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}'.format(start=self.starttime_str), settings.icon)
 
         # Display the alarm notification the user closes it manually
         a.set_timeout(pynotify.EXPIRES_NEVER)
@@ -208,14 +241,14 @@ class GCalendarAlarm(object):
 
 def message(s):
     """Prints s and flushes the buffer; useful when redirected to a file."""
-    if not quiet_flag:
+    if not settings.quiet_flag:
         print '{timestamp} {executable}: {message}'.format(
             timestamp=time.asctime(), executable=sys.argv[0], message=s)
         sys.stdout.flush()
 
 def debug(s):
     """Prints s if the debug_flag is set (running with -d or --debug)."""
-    if debug_flag:
+    if settings.debug_flag:
         message('DEBUG: {function}: {message}'.format(function=sys._getframe(1).f_code.co_name, message=s))
 
 
@@ -313,7 +346,7 @@ def do_login():
     global calendar_service
 
     try:
-        storage = Storage(secrets_file)
+        storage = Storage(settings.secrets_file)
         credentials = storage.get()
 
         if credentials is None or credentials.invalid:
@@ -345,11 +378,11 @@ def process_events_thread():
         print 'Could not initialize pynotify/libnotify!'
         sys.exit(1)
 
-    time.sleep(threads_offset) # Give a chance for the other thread to get some events
+    time.sleep(settings.threads_offset) # Give a chance for the other thread to get some events
 
     while True:
         nowunixtime = time.time()
-        debug("Running...")
+        debug("Processing events thread...")
 
         events_lock.acquire()
 
@@ -380,45 +413,53 @@ def process_events_thread():
         debug("Finished")
 
         # We can't just sleep until the next event as the other thread MIGHT add something new
-        time.sleep(alarm_sleeptime)
+        time.sleep(settings.alarm_sleeptime)
 
 def update_events_thread():
-    """Periodically sync the 'events' list to what's in Google Calendar"""
-    connectionstatus = do_login()
+    """Periodically syncs the 'events' list to what's in Google Calendar"""
+    connection_status = do_login()
 
     while True:
-        if(not connectionstatus):
-            time.sleep(reconnect_sleeptime)
-            connectionstatus = do_login()
+        if not connection_status:
+            time.sleep(settings.reconnect_sleeptime)
+            connection_status = do_login()
         else:
-            debug("running")
-            # today
+            debug("Updating events thread...")
+
+            # Today
             range_start = datetime.datetime.now(dateutil.tz.tzlocal())
-            # tommorrow, or later
-            range_end = range_start + datetime.timedelta(days=lookahead_days)
-            (connectionstatus,newevents) = date_range_query(range_start.isoformat(), range_end.isoformat())
-            if connectionstatus: # if we're still logged in, the query was successful and newevents is valid
+            # Tomorrow, or later
+            range_end = range_start + datetime.timedelta(days=settings.lookahead_days)
+
+            (connection_status, new_events) = date_range_query(range_start.isoformat(), range_end.isoformat())
+
+            if connection_status: # If we're still logged in, the query was successful and `new_events` is valid
                 events_lock.acquire()
+
                 now = time.time()
-                # remove stale events, if the new event list is valid
-                for n in events:
-                    if not (n in newevents):
-                        debug('Event deleted or modified: %s' % n)
-                        events.remove(n)
-                # add new events to the list
-                for n in newevents:
-                    debug('Is new event N really new? THIS: %s' % n)
-                    if not (n in events):
-                        debug('Not seen before: %s' % n)
-                        # does it start in the future?
-                        if now < n.starttime_unix:
+
+                # Remove stale events, if the new event list is valid
+                for event in events:
+                    if not event in new_events:
+                        debug('Event deleted or modified: `{0}`'.format(event))
+                        events.remove(event)
+
+                # Add new events to the list
+                for event in new_events:
+                    debug('Is new event really new? `{0}`'.format(event))
+                    if not event in events:
+                        debug('Event not seen before: {0}'.format(event))
+                        # Does it start in the future?
+                        if now < event.starttime_unix:
                             debug("-> future, adding")
-                            events.append(n)
+                            events.append(event)
                         else:
                             debug("-> past already")
+
                 events_lock.release()
-            debug("finished")
-            time.sleep(query_sleeptime)
+
+            debug("Finished")
+            time.sleep(settings.query_sleeptime)
 
 
 #-----------------------------------------------------------------------------#
@@ -471,12 +512,12 @@ Usage: {executable} [options]
             version            = __version__,
             executable         = sys.argv[0],
             default_secret     = '~/' + secrets_filename,
-            default_query      = query_sleeptime,
-            default_alarm      = alarm_sleeptime,
-            default_look       = lookahead_days,
-            default_retry      = reconnect_sleeptime,
-            default_timeformat = strftime_string,
-            default_icon       = icon
+            default_query      = settings.query_sleeptime,
+            default_alarm      = settings.alarm_sleeptime,
+            default_look       = settings.lookahead_days,
+            default_retry      = settings.reconnect_sleeptime,
+            default_timeformat = settings.strftime_string,
+            default_icon       = settings.con
         )
     )
 
@@ -496,49 +537,49 @@ if __name__ == '__main__':
 
     try:
         for o, a in opts:
-            if o == "-d":
-                debug_flag = True
-            elif o in ("-h", "--help"):
+            if o == '-d':
+                settings.debug_flag = True
+            elif o in ('-h', '--help'):
                 usage()
                 sys.exit()
-            elif o in ("-u", "--quiet"):
-                quiet_flag = True
-            elif o in ("-s", "--secret"):
-                secrets_file = a
-                debug("secrets_file set to %s" % secrets_file)
-            elif o in ("-q", "--query"):
-                query_sleeptime = max(intval(a), 5) # FIXME handle non-integers graciously
-                debug("query_sleeptime set to %d" % query_sleeptime)
-            elif o in ("-a", "--alarm"):
-                alarm_sleeptime = int(a)
-                debug("alarm_sleeptime set to %d" % alarm_sleeptime)
-            elif o in ("-l", "--look"):
-                lookahead_days = int(a)
-                debug("lookahead_days set to %d" % lookahead_days)
-            elif o in ("-r", "--retry"):
-                reconnect_sleeptime = int(a)
-                debug("reconnect_sleeptime set to %d" % reconnect_sleeptime)
-            elif o in ("-t", "--timeformat"):
-                strftime_string = a
-                debug("strftime_string set to %s" % strftime_string)
-            elif o in ("-i", "--icon"):
-                icon = a
-                debug("icon set to %s" % icon)
+            elif o in ('-u', '--quiet'):
+                settings.quiet_flag = True
+            elif o in ('-s', '--secret'):
+                settings.secrets_file = a
+                debug('Secrets file set to {0}'.format(settings.secrets_file))
+            elif o in ('-q', '--query'):
+                settings.query_sleeptime = max(intval(a), 5)
+                debug('Query sleep time set to {0}'.format(settings.query_sleeptime))
+            elif o in ('-a', '--alarm'):
+                settings.alarm_sleeptime = int(a)
+                debug('Alarm sleep time set to {0}'.format(settings.alarm_sleeptime))
+            elif o in ('-l', "--look"):
+                settings.lookahead_days = int(a)
+                debug('Lookahead days set to {0}'.format(settings.lookahead_days))
+            elif o in ('-r', '--retry'):
+                settings.reconnect_sleeptime = int(a)
+                debug('Reconnect sleep time set to {0}'.format(settings.reconnect_sleeptime))
+            elif o in ('-t', '--timeformat'):
+                settings.strftime_string = a
+                debug("strftime format string set to {0}".format(settings.strftime_string))
+            elif o in ('-i', '--icon'):
+                settings.icon = a
+                debug('Icon set to {0}'.format(settings.icon))
             else:
-                assert False, "unhandled option"
+                assert False, 'Unsupported option'
     except ValueError:
-        print "Option %s requires an integer parameter; use '-h' for help." % o
+        print 'Option {0} requires an integer parameter; use \'-h\' for help.'.format(o)
         sys.exit(1)
 
-    # set up ^C handler
-    signal.signal( signal.SIGINT, stopthismadness )
+    # Set up ^C handler
+    signal.signal(signal.SIGINT, stopthismadness)
 
-    # start up the event processing thread
-    debug("Starting p_e_t")
-    thread.start_new_thread(process_events_thread,())
+    # Start up the event processing thread
+    debug('Starting event processing thread')
+    thread.start_new_thread(process_events_thread, ())
 
     # starting up
-    message("gcalert %s running..." % __version__)
-    debug("SETTINGS: secrets_file: %s alarm_sleeptime: %d query_sleeptime: %d lookahead_days: %d reconnect_sleeptime: %d strftime_string: %s" % ( secrets_file, alarm_sleeptime, query_sleeptime, lookahead_days, reconnect_sleeptime, strftime_string ))
+    message('{0} {1} running...'.format(__program__, __version__))
+    debug('Settings: {0}'.format(settings))
 
     update_events_thread()
