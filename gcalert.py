@@ -45,6 +45,7 @@ import urllib
 import thread
 import signal
 import datetime
+import argparse
 
 # Dependencies below come from separate packages, the rest (above) are in the
 # standard library so those are expected to work :)
@@ -64,7 +65,7 @@ try:
     from apiclient.discovery import build
     from oauth2client.file import Storage
     from oauth2client.client import OAuth2WebServerFlow
-    from oauth2client.tools import run
+    from oauth2client.tools import run_flow
 except ImportError as e:
     print "Dependency was not found! %s" % e
     print "(Try: sudo apt-get install python-notify python-gdata python-dateutil notification-daemon)"
@@ -357,18 +358,24 @@ def do_login():
         credentials = storage.get()
 
         if credentials is None or credentials.invalid:
-            credentials = run(
-                OAuth2WebServerFlow(
-                    client_id     = __API_CLIENT_ID__,
-                    client_secret = __API_CLIENT_SECRET__,
-                    scope         = 'https://www.googleapis.com/auth/calendar',
-                    user_agent    = __program__+'/'+__version__
-                ),
-                storage
-            )
+            flow = OAuth2WebServerFlow(
+                client_id     = __API_CLIENT_ID__,
+                client_secret = __API_CLIENT_SECRET__,
+                user_agent    = __program__+'/'+__version__,
+                redirect_uri  = 'urn:ietf:wg:oauth:2.0:oob:auto',
+                scope         = 'https://www.googleapis.com/auth/calendar')
 
-        authHttp = credentials.authorize(httplib2.Http())
-        calendar_service = build(serviceName='calendar', version='v3', http=authHttp)
+            parser = argparse.ArgumentParser(
+                formatter_class = argparse.RawDescriptionHelpFormatter,
+                parents         = [tools.argparser])
+
+            # Parse the command-line flags
+            flags = parser.parse_args(sys.argv[1:])
+
+            credentials = run_flow(flow, storage, flags)
+
+        auth_http = credentials.authorize(httplib2.Http())
+        calendar_service = build(serviceName='calendar', version='v3', http=auth_http)
     except Exception as error:
         debug('Failed to authenticate to Google: {0}'.format(error))
         message('Failed to authenticate to Google.')
@@ -472,6 +479,7 @@ def update_events_thread():
 
             debug("Finished")
             time.sleep(settings.query_sleeptime)
+
 
 
 #-----------------------------------------------------------------------------#
