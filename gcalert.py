@@ -227,9 +227,9 @@ class GCalendarAlarm(object):
 
     def trigger_alarm(self):
         """Show the alarm box for one event/recurrence"""
-        message(settings.bold_text+'\n##### ALARM #####'+settings.normal_text)
+        message(settings.bold_text+'\n########## ALARM ##########'+settings.normal_text)
         message('\n{0}'.format(self))
-        message(settings.bold_text+'##### ALARM #####\n'+settings.normal_text)
+        message(settings.bold_text+'########## ALARM ##########\n'+settings.normal_text)
 
         if self.where:
             a = pynotify.Notification(self.title, '<b>Starting:</b> {start}\n<b>Where:</b> {location}'.format(start=self.starttime_str, location=self.where), settings.icon)
@@ -431,7 +431,7 @@ class GCalert(object):
             for event in self.events:
                 if event.starttime_unix < nowunixtime:
                     debug('Removing event `{0}`'.format(event))
-                    self.events.remove(e)
+                    self.events.remove(event)
 
                     # Also free up some memory
                     if event in self.alerted_events:
