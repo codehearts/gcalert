@@ -63,11 +63,12 @@ try:
     # For Google Calendar API v3
     import httplib2
     from apiclient.discovery import build
+    from oauth2client import tools
     from oauth2client.file import Storage
     from oauth2client.client import OAuth2WebServerFlow
     from oauth2client.tools import run_flow
 except ImportError as e:
-    print "Dependency was not found! %s" % e
+    print 'Dependency was not found! {0}'.format(e)
     print "(Try: sudo apt-get install python-notify python-gdata python-dateutil notification-daemon)"
     sys.exit(1)
 
