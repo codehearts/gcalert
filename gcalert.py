@@ -132,139 +132,6 @@ Usage: {executable} [options]
            (Default: {default_icon})'''
 
 #-----------------------------------------------------------------------------#
-# GCalert Settings                                                            #
-#-----------------------------------------------------------------------------#
-
-class GCalertSettings(object):
-    """Stores all settings for this gcalert instance."""
-    # Text colors
-    purple_text    = '\033[95m'
-    cyan_text      = '\033[96m'
-    darkcyan_text  = '\033[36m'
-    blue_text      = '\033[94m'
-    green_text     = '\033[92m'
-    yellow_text    = '\033[93m'
-    red_text       = '\033[91m'
-    bold_text      = '\033[1m'
-    underline_text = '\033[4m'
-    normal_text    = '\033[0m'
-
-    def __init__(self):
-        super(GCalertSettings, self).__init__()
-
-        global __doc__
-
-        self.config_directory    = '~/.config/gcalert/'
-        self.abs_config_directory= os.path.expanduser(self.config_directory)
-        self.secrets_filename    = '.gcalert_oauth'
-        self.rc_filename         = '.gcalertrc'
-        self.secrets_file        = os.path.join(self.abs_config_directory, self.secrets_filename)
-        self.rc_file             = os.path.join(self.abs_config_directory, self.rc_filename)
-        self.alarm_sleeptime     = 30                # Seconds between waking up to check the alarm list
-        self.query_sleeptime     = 180               # Seconds between querying for new events
-        self.lookahead_days      = 3                 # Look this many days in the future
-        self.debug_flag          = False             # Display debug messages
-        self.quiet_flag          = False             # Suppresses all non-debug messages
-        self.reconnect_sleeptime = 300               # Seconds between reconnects in case of errors
-        self.threads_offset      = 5                 # Offset between the two threads' runs, in seconds
-        self.strftime_string     = '%Y-%m-%d  %H:%M' # String to format times with
-        self.icon                = 'gtk-dialog-info' # Icon to use in notifications
-
-        # Populate the doc string with the default values
-        __doc__ = __doc__.format(
-            program            = __program__,
-            version            = __version__,
-            executable         = sys.argv[0],
-            default_rc         = self.config_directory + self.rc_filename,
-            default_secret     = self.config_directory + self.secrets_filename,
-            default_query      = self.query_sleeptime,
-            default_alarm      = self.alarm_sleeptime,
-            default_look       = self.lookahead_days,
-            default_retry      = self.reconnect_sleeptime,
-            default_timeformat = self.strftime_string,
-            default_icon       = self.icon
-        )
-
-        # Create the config directory if it doesn't already exist
-        if not os.path.exists(self.abs_config_directory):
-            os.makedirs(self.abs_config_directory)
-
-        # Parse command line arguments
-        try:
-            opts, args = getopt.getopt(
-                sys.argv[1:],
-                'hdqs:u:c:a:l:r:t:i:', ['help', 'debug', 'quiet', 'secret=', 'rc=', 'check=', 'alarm=', 'look=', 'retry=', 'timeformat=', 'icon='])
-        except getopt.GetoptError as err:
-            # Print help information and exit:
-            print str(err) # Will print something like "option -a not recognized"
-            sys.exit(2)
-
-        try:
-            for o, a in opts:
-                if o in ('-d', '--debug'):
-                    self.debug_flag = True
-                elif o in ('-h', '--help'):
-                    print __doc__
-                    sys.exit()
-                elif o in ('-q', '--quiet'):
-                    self.quiet_flag = True
-                elif o in ('-s', '--secret'):
-                    self.secrets_file = a
-                    debug('Secrets file set to {0}'.format(self.secrets_file))
-                elif o in ('-u', '--rc'):
-                    self.rc_file = a
-                    debug('gcalertrc file set to {0}'.format(self.rc_file))
-                elif o in ('-c', '--check'):
-                    self.query_sleeptime = max(intval(a), 5)
-                    debug('Query sleep time set to {0}'.format(self.query_sleeptime))
-                elif o in ('-a', '--alarm'):
-                    self.alarm_sleeptime = int(a)
-                    debug('Alarm sleep time set to {0}'.format(self.alarm_sleeptime))
-                elif o in ('-l', "--look"):
-                    self.lookahead_days = int(a)
-                    debug('Lookahead days set to {0}'.format(self.lookahead_days))
-                elif o in ('-r', '--retry'):
-                    self.reconnect_sleeptime = int(a)
-                    debug('Reconnect sleep time set to {0}'.format(self.reconnect_sleeptime))
-                elif o in ('-t', '--timeformat'):
-                    self.strftime_string = a
-                    debug("strftime format string set to {0}".format(self.strftime_string))
-                elif o in ('-i', '--icon'):
-                    self.icon = a
-                    debug('Icon set to {0}'.format(self.icon))
-                else:
-                    assert False, 'Unsupported argument'
-        except ValueError:
-            message('Option {0} requires an integer parameter; use \'-h\' for help.'.format(o))
-            sys.exit(1)
-
-    def __str__(self):
-        """Returns a string representation of the settings."""
-        return '''
-            Secrets file:         {secrets_file}
-            Alarm sleep time:     {alarm_time}
-            Query sleep time:     {query_time}
-            Lookahead days:       {lookahead}
-            Debug:                {debug}
-            Quiet:                {quiet}
-            Reconnect sleep time: {reconnect_time}
-            Thread offset:        {thread_offset}
-            strftime format:      {strftime_str}
-            Icon:                 {icon}
-        '''.format(
-            secrets_file   = self.secrets_file,
-            alarm_time     = self.alarm_sleeptime,
-            query_time     = self.query_sleeptime,
-            lookahead      = self.lookahead_days,
-            debug          = self.debug_flag,
-            quiet          = self.quiet_flag,
-            reconnect_time = self.reconnect_sleeptime,
-            thread_offset  = self.threads_offset,
-            strftime_str   = self.strftime_string,
-            icon           = self.icon
-        )
-
-#-----------------------------------------------------------------------------#
 # Console output functions                                                    #
 #-----------------------------------------------------------------------------#
 
@@ -343,9 +210,9 @@ class GCalendarAlarm(object):
 
     def trigger_alarm(self):
         """Show the alarm box for one event/recurrence"""
-        message(settings.bold_text+'\n########## ALARM ##########'+settings.normal_text)
+        message(text.bold+'\n########## ALARM ##########'+text.normal)
         message('\n{0}'.format(self))
-        message(settings.bold_text+'########## ALARM ##########\n'+settings.normal_text)
+        message(text.bold+'########## ALARM ##########\n'+text.normal)
 
         if self.where:
             a = pynotify.Notification(self.title, '<b>Starting:</b> {start}\n<b>Where:</b> {location}'.format(start=self.starttime_str, location=self.where), settings.icon)
@@ -638,6 +505,144 @@ class GCalert(object):
         """Halts execution and exits. Intended for SIGINT (^C)."""
         message('Shutting down on SIGINT.')
         sys.exit(0)
+
+#-----------------------------------------------------------------------------#
+# Text color constants                                                        #
+#-----------------------------------------------------------------------------#
+
+class text:
+    purple    = '\033[95m'
+    cyan      = '\033[96m'
+    darkcyan  = '\033[36m'
+    blue      = '\033[94m'
+    green     = '\033[92m'
+    yellow    = '\033[93m'
+    red       = '\033[91m'
+    bold      = '\033[1m'
+    underline = '\033[4m'
+    normal    = '\033[0m'
+
+#-----------------------------------------------------------------------------#
+# GCalert Settings                                                            #
+#-----------------------------------------------------------------------------#
+
+class GCalertSettings(object):
+    """Stores all settings for this gcalert instance."""
+
+    def __init__(self):
+        super(GCalertSettings, self).__init__()
+
+        global __doc__
+
+        self.config_directory    = '~/.config/gcalert/'
+        self.abs_config_directory= os.path.expanduser(self.config_directory)
+        self.secrets_filename    = '.gcalert_oauth'
+        self.rc_filename         = '.gcalertrc'
+        self.secrets_file        = os.path.join(self.abs_config_directory, self.secrets_filename)
+        self.rc_file             = os.path.join(self.abs_config_directory, self.rc_filename)
+        self.alarm_sleeptime     = 30                # Seconds between waking up to check the alarm list
+        self.query_sleeptime     = 180               # Seconds between querying for new events
+        self.lookahead_days      = 3                 # Look this many days in the future
+        self.debug_flag          = False             # Display debug messages
+        self.quiet_flag          = False             # Suppresses all non-debug messages
+        self.reconnect_sleeptime = 300               # Seconds between reconnects in case of errors
+        self.threads_offset      = 5                 # Offset between the two threads' runs, in seconds
+        self.strftime_string     = '%Y-%m-%d  %H:%M' # String to format times with
+        self.icon                = 'gtk-dialog-info' # Icon to use in notifications
+
+        # Populate the doc string with the default values
+        __doc__ = __doc__.format(
+            program            = __program__,
+            version            = __version__,
+            executable         = sys.argv[0],
+            default_rc         = self.config_directory + self.rc_filename,
+            default_secret     = self.config_directory + self.secrets_filename,
+            default_query      = self.query_sleeptime,
+            default_alarm      = self.alarm_sleeptime,
+            default_look       = self.lookahead_days,
+            default_retry      = self.reconnect_sleeptime,
+            default_timeformat = self.strftime_string,
+            default_icon       = self.icon
+        )
+
+        # Create the config directory if it doesn't already exist
+        if not os.path.exists(self.abs_config_directory):
+            os.makedirs(self.abs_config_directory)
+
+        # Parse command line arguments
+        try:
+            opts, args = getopt.getopt(
+                sys.argv[1:],
+                'hdqs:u:c:a:l:r:t:i:', ['help', 'debug', 'quiet', 'secret=', 'rc=', 'check=', 'alarm=', 'look=', 'retry=', 'timeformat=', 'icon='])
+        except getopt.GetoptError as err:
+            # Print help information and exit:
+            print str(err) # Will print something like "option -a not recognized"
+            sys.exit(2)
+
+        try:
+            for o, a in opts:
+                if o in ('-d', '--debug'):
+                    self.debug_flag = True
+                elif o in ('-h', '--help'):
+                    print __doc__
+                    sys.exit()
+                elif o in ('-q', '--quiet'):
+                    self.quiet_flag = True
+                elif o in ('-s', '--secret'):
+                    self.secrets_file = a
+                    debug('Secrets file set to {0}'.format(self.secrets_file))
+                elif o in ('-u', '--rc'):
+                    self.rc_file = a
+                    debug('gcalertrc file set to {0}'.format(self.rc_file))
+                elif o in ('-c', '--check'):
+                    self.query_sleeptime = max(intval(a), 5)
+                    debug('Query sleep time set to {0}'.format(self.query_sleeptime))
+                elif o in ('-a', '--alarm'):
+                    self.alarm_sleeptime = int(a)
+                    debug('Alarm sleep time set to {0}'.format(self.alarm_sleeptime))
+                elif o in ('-l', "--look"):
+                    self.lookahead_days = int(a)
+                    debug('Lookahead days set to {0}'.format(self.lookahead_days))
+                elif o in ('-r', '--retry'):
+                    self.reconnect_sleeptime = int(a)
+                    debug('Reconnect sleep time set to {0}'.format(self.reconnect_sleeptime))
+                elif o in ('-t', '--timeformat'):
+                    self.strftime_string = a
+                    debug("strftime format string set to {0}".format(self.strftime_string))
+                elif o in ('-i', '--icon'):
+                    self.icon = a
+                    debug('Icon set to {0}'.format(self.icon))
+                else:
+                    assert False, 'Unsupported argument'
+        except ValueError:
+            message('Option {0} requires an integer parameter; use \'-h\' for help.'.format(o))
+            sys.exit(1)
+
+    def __str__(self):
+        """Returns a string representation of the settings."""
+        return '''
+            Secrets file:         {secrets_file}
+            Alarm sleep time:     {alarm_time}
+            Query sleep time:     {query_time}
+            Lookahead days:       {lookahead}
+            Debug:                {debug}
+            Quiet:                {quiet}
+            Reconnect sleep time: {reconnect_time}
+            Thread offset:        {thread_offset}
+            strftime format:      {strftime_str}
+            Icon:                 {icon}
+        '''.format(
+            secrets_file   = self.secrets_file,
+            alarm_time     = self.alarm_sleeptime,
+            query_time     = self.query_sleeptime,
+            lookahead      = self.lookahead_days,
+            debug          = self.debug_flag,
+            quiet          = self.quiet_flag,
+            reconnect_time = self.reconnect_sleeptime,
+            thread_offset  = self.threads_offset,
+            strftime_str   = self.strftime_string,
+            icon           = self.icon
+        )
 
 
 
