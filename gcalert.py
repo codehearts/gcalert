@@ -244,12 +244,18 @@ class GCalendarAlarm(object):
 
     def __str__(self):
         """Returns a string representation of this object's contents."""
-        return 'Title:        {title}\nLocation:     {location}\nStart time:   {start}\nReminder set: {minutes} minutes before\n'.format(
-            title    = self.title,
-            location = self.where,
-            start    = self.starttime_str,
-            minutes  = self.minutes
-        )
+        string = ''
+        representation = [
+            ('Title:',        self.title),
+            ('Location:',     self.where),
+            ('Start time:',   self.starttime_str),
+            ('Reminder set:', '{0} minutes before'.format(self.minutes)),
+        ]
+
+        for data in representation:
+            string += '{0:<15} {1}\n'.format(data[0], data[1])
+
+        return string
 
     def __repr__(self):
         """Returns a string representation of this object."""
@@ -296,7 +302,7 @@ class GCalert(object):
         thread.start_new_thread(self.process_events_thread, ())
 
         # Start up
-        message('{0} {1} running...'.format(__program__, __version__))
+        message('{0} {1} running'.format(__program__, __version__))
         debug('Settings: {0}'.format(settings))
 
         self.update_events_thread()
