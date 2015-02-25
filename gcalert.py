@@ -1,14 +1,14 @@
 #!/usr/bin/python2
-# vim: ai expandtab
+
+################################################################################
+# GCalert periodically checks all of your Google Calendars and displays a
+# desktop notification whenever a reminder is set for an event.
 #
-# This script will periodically check your Google Calendar and display an alarm
-# when that's set for the event. It reads ALL your calendars automatically.
+# Only reminders set to 'popup' in Google Calendar will spawn a notification.
+# This is the intended behavoir.
 #
-# Only 'popup' alarms will result in what's essentially a popup. This is a feature :)
-#
-# Requires: python-notify python-gdata python-dateutil notification-daemon
-#
-# Home: http://github.com/raas/gcalert
+# Home: http://github.com/nejsan/gcalert
+# Original project: http://github.com/raas/gcalert
 #
 # ----------------------------------------------------------------------------
 #
@@ -28,14 +28,7 @@
 #
 # ----------------------------------------------------------------------------
 #
-# TODO:
-# - warn for unsecure permissions of the password/secret file
-# - use some sort of proper logging with log levels etc
-# - options for selecting which calendars to alert (currently: all of them)
-# - snooze buttons; this requires a gtk.main() thread and that's not trivial
-# - testing (as in, unit testing), after having a main()
-# - multi-language support
-# - GUI and status bar icon
+# vim: ai expandtab
 
 import getopt
 import sys
