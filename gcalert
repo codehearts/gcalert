@@ -43,27 +43,24 @@ import argparse
 # Dependencies below come from separate packages, the rest (above) are in the
 # standard library so those are expected to work :)
 try:
-    # Google calendar stuff
-    import gdata.calendar.service
-    import gdata.calendar.client
-    import gdata.service
-    import gdata.calendar
     # libnotify handler
     import pynotify
+
     # Date parser and timezone handler
     import dateutil.tz
     import dateutil.parser
+
     # For Google Calendar API v3
-    import httplib2
-    from apiclient.discovery import build
     from oauth2client import tools
     from oauth2client.file import Storage
     from oauth2client.client import OAuth2WebServerFlow
     from oauth2client.tools import run_flow
+    from apiclient.discovery import build
+    import httplib2
 except ImportError as e:
     print 'Dependency was not found! {0}\n'.format(e)
     print 'For Debian/Ubuntu, try:'
-    print '\tsudo apt-get install python-notify python-gdata python-dateutil notification-daemon'
+    print '\tsudo apt-get install python-notify python-dateutil python-googleapi notification-daemon'
     sys.exit(1)
 
 #-----------------------------------------------------------------------------#

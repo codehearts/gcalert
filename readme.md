@@ -9,7 +9,7 @@ Also; getting 'thrown out' from Google Services is apparently normal, and gcaler
 
 ## Requirements
 #### Debian Packages
-`apt-get install python-notify python-gdata python-dateutil notification-daemon`
+`apt-get install python-notify python-dateutil python-googleapi notification-daemon`
 
 ## TODO
 - Warn for insecure permissions of the OAuth file.
