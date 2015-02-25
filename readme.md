@@ -23,6 +23,7 @@ You can simply download the [`gcalcli`](https://aur.archlinux.org/packages/gcale
 - Unit Tests, after having a main().
 - Multi-language support.
 - GUI and status bar icon.
+- Add `systemd` scripts to Arch package
 
 ## License
 
