@@ -11,15 +11,6 @@ Also; getting 'thrown out' from Google Services is apparently normal, and gcaler
 ### Debian Packages
 `python-notify python-gdata python-dateutil notification-daemon`
 
-## TODO
-- Warn for insecure permissions of the OAuth file.
-- Use some sort of proper logging with log levels, etc.
-- Options for selecting which calendars to check
-- Snooze buttons; this requires a gtk.main() thread and that's not trivial.
-- Unit Tests, after having a main().
-- Multi-language support.
-- GUI and status bar icon.
-
 ## License
 
 Copyright 2009 Andras Horvath (andras.horvath nospamat gmailcom) This
