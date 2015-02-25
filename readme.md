@@ -7,6 +7,10 @@ This program periodically checks all of your Google Calendars and displays a des
 
 Also; getting 'thrown out' from Google Services is apparently normal, and gcalert will reconnect automatically.
 
+## Installation
+#### Arch Linux
+You can simply download the [`gcalcli`](https://aur.archlinux.org/packages/gcalert/) package from the AUR.
+
 ## Requirements
 #### Debian Packages
 `apt-get install python-notify python-dateutil python-googleapi notification-daemon`
@@ -19,6 +23,7 @@ Also; getting 'thrown out' from Google Services is apparently normal, and gcaler
 - Unit Tests, after having a main().
 - Multi-language support.
 - GUI and status bar icon.
+- Add `systemd` scripts to Arch package
 
 ## License
 
