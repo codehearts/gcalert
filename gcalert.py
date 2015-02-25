@@ -538,7 +538,7 @@ class GCalertSettings(object):
         self.config_directory    = '~/.config/gcalert/'
         self.abs_config_directory= os.path.expanduser(self.config_directory)
         self.secrets_filename    = '.gcalert_oauth'
-        self.rc_filename         = '.gcalertrc'
+        self.rc_filename         = 'gcalertrc'
         self.secrets_file        = os.path.join(self.abs_config_directory, self.secrets_filename)
         self.rc_file             = os.path.join(self.abs_config_directory, self.rc_filename)
         self.alarm_sleeptime     = 30                # Seconds between waking up to check the alarm list
@@ -548,7 +548,7 @@ class GCalertSettings(object):
         self.quiet_flag          = False             # Suppresses all non-debug messages
         self.reconnect_sleeptime = 300               # Seconds between reconnects in case of errors
         self.threads_offset      = 5                 # Offset between the two threads' runs, in seconds
-        self.strftime_string     = '%Y-%m-%d  %H:%M' # String to format times with
+        self.strftime_string     = '%H:%M %Y-%m-%d'  # String to format times with
         self.icon                = 'gtk-dialog-info' # Icon to use in notifications
 
         # Populate the doc string with the default values
