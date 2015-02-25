@@ -272,6 +272,7 @@ class GCalert(object):
 
         # Create a global settings instance
         settings = GCalertSettings()
+        settings.initialize_user_settings()
 
         # Set GCalert properties
         self.events = [] # all events seen so far that are yet to start
@@ -565,15 +566,26 @@ class GCalertSettings(object):
             default_icon       = self.icon
         )
 
+    def initialize_user_settings(self):
+        """Initializes user settings from their gcalertrc and then from their commandline arguments."""
         # Create the config directory if it doesn't already exist
         if not os.path.exists(self.abs_config_directory):
             os.makedirs(self.abs_config_directory)
 
-        # Parse command line arguments
+        # Handle gcalertrc file arguments
+        if os.path.exists(self.rc_file):
+            with open(self.rc_file, 'r') as rc_file:
+                rc_arguments = rc_file.read().splitlines()
+            self.handle_arguments(rc_arguments)
+
+        # Handle command line arguments
+        self.handle_arguments(sys.argv[1:])
+
+    def handle_arguments(self, args):
+        """Parses the given list of commandline arguments."""
         try:
             opts, args = getopt.getopt(
-                sys.argv[1:],
-                'hdqs:u:c:a:l:r:t:i:', ['help', 'debug', 'quiet', 'secret=', 'rc=', 'check=', 'alarm=', 'look=', 'retry=', 'timeformat=', 'icon='])
+                args, 'hdqs:u:c:a:l:r:t:i:', ['help', 'debug', 'quiet', 'secret=', 'rc=', 'check=', 'alarm=', 'look=', 'retry=', 'timeformat=', 'icon='])
         except getopt.GetoptError as err:
             # Print help information and exit:
             print str(err) # Will print something like "option -a not recognized"
