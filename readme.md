@@ -24,6 +24,7 @@ You can simply download the [`gcalcli`](https://aur.archlinux.org/packages/gcale
 - Multi-language support.
 - GUI and status bar icon.
 - Add `systemd` scripts to Arch package
+- Parameter for changing notification text formatting
 
 ## License
 
