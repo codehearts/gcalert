@@ -1,6 +1,7 @@
 #!/usr/bin/python
 
-################################################################################
+# ----------------------------------------------------------------------------
+#
 # GCalert periodically checks all of your Google Calendars and displays a
 # desktop notification whenever a reminder is set for an event.
 #
@@ -27,8 +28,6 @@
 # with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 # ----------------------------------------------------------------------------
-#
-# vim: ai expandtab
 
 import getopt
 import sys
@@ -654,3 +653,5 @@ class GCalertSettings(object):
 
 if __name__ == '__main__':
     GCalert()
+
+# vim: ai expandtab
