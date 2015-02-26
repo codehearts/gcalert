@@ -1,3 +1,4 @@
 screenshot.png export-ignore
+.gitattributes export-ignore
 pkgbuilds/ export-ignore
 readme.md export-ignore
