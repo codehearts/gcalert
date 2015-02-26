@@ -12,7 +12,7 @@ Also; getting 'thrown out' from Google Services is apparently normal, and gcaler
 You can simply download the [`gcalcli`](https://aur.archlinux.org/packages/gcalert/) package from the AUR.
 
 ## Requirements
-#### Debian Packages
+#### Debian/Ubuntu Packages
 `apt-get install python-notify python-dateutil python-googleapi notification-daemon`
 
 ## TODO
