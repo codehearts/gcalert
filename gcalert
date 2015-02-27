@@ -596,7 +596,7 @@ class GCalertSettings(object):
                     self.rc_file = a
                     debug('gcalertrc file set to {0}'.format(self.rc_file))
                 elif o in ('-c', '--check'):
-                    self.query_sleeptime = max(intval(a), 5)
+                    self.query_sleeptime = max(int(a), 5)
                     debug('Query sleep time set to {0}'.format(self.query_sleeptime))
                 elif o in ('-a', '--alarm'):
                     self.alarm_sleeptime = int(a)
