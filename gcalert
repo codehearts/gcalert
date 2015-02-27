@@ -141,10 +141,10 @@ def debug(message):
         sys.stdout.flush()
 
 #-----------------------------------------------------------------------------#
-# Calendar Alerts Class                                                       #
+# Calendar Notifications Class                                                #
 #-----------------------------------------------------------------------------#
 
-class GCalendarAlarm(object):
+class GCalertNotification(object):
     """Represents an instance of a calendar alarm for an event."""
 
     def __init__(self, title, where, start_string, end_string, minutes):
@@ -227,7 +227,7 @@ class GCalendarAlarm(object):
 
     def __repr__(self):
         """Returns a string representation of this object."""
-        return 'GCalendarAlarm({title}, {location}, {start}, {end}, {minutes})'.format(
+        return 'GCalertNotification({title}, {location}, {start}, {end}, {minutes})'.format(
             title    = self.title,
             location = self.where,
             start    = self.starttime_str,
@@ -285,7 +285,7 @@ class GCalert(object):
     def date_range_query(self, start_date=None, end_date=None):
         """
         Get a list of events happening between the given dates in all calendars the user has
-        Each reminder occurrence creates a new event (GCalendarAlarm object).
+        Each reminder occurrence creates a new event (GCalertNotification object).
 
         Returns:
             A tuple in the format (<success boolean>, <list of events>).
@@ -322,14 +322,14 @@ class GCalert(object):
             except KeyError:
                 pass # Not all events have 'where' fields, and that's okay
 
-            # Create a GCalendarAlarm out of each (event x reminder x occurrence)
+            # Create a GCalertNotification out of each (event x reminder x occurrence)
             for reminder in event['reminders']['overrides']:
                 debug('Event `{0}` notification method: {1}'.format(event['summary'], reminder['method']))
 
                 if reminder['method'] == 'popup': # 'popup' in the web interface
                     # Event (one for each alarm instance) is done, add it to the list
 
-                    this_event = GCalendarAlarm(
+                    this_event = GCalertNotification(
                         event['summary'],
                         where,
                         event['start']['dateTime'],
@@ -343,7 +343,7 @@ class GCalert(object):
                     event_timer.name = (hash(this_event)) # Use the hash to identify the event this timer is for
                     event_timer.setDaemon(True) # Run as a daemon
 
-                    debug('New GCalendarAlarm instance: \n{0}'.format(this_event))
+                    debug('New GCalertNotification instance: \n{0}'.format(this_event))
 
                     event_list.append(event_timer)
 
@@ -406,7 +406,7 @@ class GCalert(object):
         time.sleep(settings.threads_offset) # Give a chance for the other thread to get some events
 
         while True:
-            debug('Processing events thread...')
+            debug('Garbage collecting timers...')
 
             self.events_lock.acquire()
 
@@ -417,7 +417,7 @@ class GCalert(object):
 
             self.events_lock.release()
 
-            debug('Finished')
+            debug('Done garbage collecting')
 
             # We can't just sleep until the next event as the other thread MIGHT add something new
             time.sleep(settings.alarm_sleeptime)
