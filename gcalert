@@ -160,9 +160,7 @@ class GCalertNotification(object):
         self.title   = title
         self.where   = where
         self.start   = dateutil.parser.parse(start_string)
-        self.end     = dateutil.parser.parse(end_string)
         self.minutes = minutes
-        self.reminder_time = self.start - datetime.timedelta(minutes=self.minutes)
 
         # Google sometimes does not supply timezones
         # (for events that last more than a day and have no time set, apparently)
@@ -174,32 +172,27 @@ class GCalertNotification(object):
         except AttributeError:
             self.start = self.start.replace(tzinfo=dateutil.tz.tzlocal())
 
-        try:
-            if not self.end.tzname():
-                self.end = self.end.replace(tzinfo=dateutil.tz.tzlocal())
-        except AttributeError:
-            self.end = self.end.replace(tzinfo=dateutil.tz.tzlocal())
+        self.start_str = self.start.astimezone(dateutil.tz.tzlocal()).strftime(settings.strftime_string)
 
-    @property
-    def starttime_str(self):
-        """Returns a string representing the start time (in the local timezone) of the event."""
-        return self.start.astimezone(dateutil.tz.tzlocal()).strftime(settings.strftime_string)
+        # Get the number of seconds until this notification should go off
+        reminder_time = self.start - datetime.timedelta(minutes=self.minutes)
+        notification_time = (reminder_time - datetime.datetime.now(dateutil.tz.tzlocal())).total_seconds()
 
-    @property
-    def endtime_str(self):
-        """Returns a string representing the end time (in the local timezone) of the event."""
-        return self.end.astimezone(dateutil.tz.tzlocal()).strftime(settings.strftime_string)
+        # Initialize the timer
+        self.timer = Timer(notification_time, self.trigger_alarm)
+        self.timer.setDaemon(True) # Run as a daemon
+        self.timer.name = repr(self) # Use the hash to identify the event this timer is for
 
     def trigger_alarm(self):
         """Show the alarm box for one event/recurrence"""
         message(text.bold+'\n########## ALARM ##########'+text.normal)
-        message('\n{0}'.format(self))
+        message('\n{0}'.format(self.get_formatted()))
         message(text.bold+'########## ALARM ##########\n'+text.normal)
 
         if self.where:
-            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}\n<b>Where:</b> {location}'.format(start=self.starttime_str, location=self.where), settings.icon)
+            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}\n<b>Where:</b> {location}'.format(start=self.start_str, location=self.where), settings.icon)
         else:
-            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}'.format(start=self.starttime_str), settings.icon)
+            a = pynotify.Notification(self.title, '<b>Starting:</b> {start}'.format(start=self.start_str), settings.icon)
 
         # Display the alarm notification the user closes it manually
         a.set_timeout(pynotify.EXPIRES_NEVER)
@@ -207,7 +200,7 @@ class GCalertNotification(object):
         if not a.show():
             message('Failed to send alarm notification!')
 
-    def __str__(self):
+    def get_formatted(self):
         """Returns a string representation of this object's contents."""
         string = ''
         representation = [
@@ -222,23 +215,17 @@ class GCalertNotification(object):
 
         return string
 
-    def __hash__(self):
-        return hash((self.title, self.where, self.start, self.end, self.minutes))
-
-    def __repr__(self):
+    def __str__(self):
         """Returns a string representation of this object."""
-        return 'GCalertNotification({title}, {location}, {start}, {end}, {minutes})'.format(
+        return 'GCalertNotification({title}, {location}, {start}, {minutes})'.format(
             title    = self.title,
             location = self.where,
-            start    = self.starttime_str,
-            end      = self.endtime_str,
+            start    = self.start,
             minutes  = self.minutes
         )
 
-    def __eq__(self, other):
-        """Returns True if this instance has the same data as the comparison instance."""
-        return self.__repr__() == other.__repr__()
-
+    def __hash__(self):
+        return hash(str(self))
 
 
 #-----------------------------------------------------------------------------#
@@ -262,7 +249,7 @@ class GCalert(object):
         # Set GCalert properties
         self.events = [] # All events seen so far that are yet to start
         self.events_lock = thread.allocate_lock() # Hold to access events[]
-        self.expired_timers = set()
+        self.expired_timers = [] # All events which have had their timers registered
         self.calendar_service = None
 
         # Set up ^C handler
@@ -300,7 +287,7 @@ class GCalert(object):
             for cal_id in cal_ids:
                 debug('Processing calendar: {0}'.format(cal_id))
 
-                query = self.calendar_service.events().list(calendarId=cal_id, timeMin=start_date, timeMax=end_date, singleEvents=True).execute()
+                query = self.calendar_service.events().list(calendarId=cal_id,timeMin=start_date,timeMax=end_date,singleEvents=True).execute()
                 google_events += query['items']
 
                 debug('Events so far: {0}'.format(len(google_events)))
@@ -316,11 +303,8 @@ class GCalert(object):
             return (False, [])
 
         for event in google_events:
-            where = ''
-            try:
-                where = event['location']
-            except KeyError:
-                pass # Not all events have 'where' fields, and that's okay
+            # Not all events have 'where' fields, and that's okay
+            where = event['location'] if ('location' in event) else ''
 
             # Create a GCalertNotification out of each (event x reminder x occurrence)
             for reminder in event['reminders']['overrides']:
@@ -336,16 +320,9 @@ class GCalert(object):
                         event['end']['dateTime'],
                         reminder['minutes'])
 
-                    # Get the number of seconds until this notification should go off
-                    notification_time = (this_event.reminder_time - datetime.datetime.now(dateutil.tz.tzlocal())).total_seconds()
+                    debug('New GCalertNotification instance: {0}'.format(this_event))
 
-                    event_timer = Timer(notification_time, this_event.trigger_alarm)
-                    event_timer.name = (hash(this_event)) # Use the hash to identify the event this timer is for
-                    event_timer.setDaemon(True) # Run as a daemon
-
-                    debug('New GCalertNotification instance: \n{0}'.format(this_event))
-
-                    event_list.append(event_timer)
+                    event_list.append(this_event)
 
         return (True, event_list)
 
@@ -410,10 +387,10 @@ class GCalert(object):
 
             self.events_lock.acquire()
 
-            for event_timer in self.events:
-                if event_timer.finished:
-                    debug('Removing event timer `{0}`'.format(event_timer))
-                    self.events.remove(event_timer)
+            for event in self.events:
+                if not event.timer.is_alive():
+                    debug('Removing event timer `{0}`'.format(event))
+                    self.events.remove(event)
 
             self.events_lock.release()
 
@@ -435,7 +412,7 @@ class GCalert(object):
             # Tomorrow, or later
             range_end = range_start + datetime.timedelta(days=settings.lookahead_days)
 
-            (connection_status, new_event_timers) = self.date_range_query(range_start.isoformat(), range_end.isoformat())
+            (connection_status, new_events) = self.date_range_query(range_start.isoformat(), range_end.isoformat())
             # TODO This while loop won't get the date range query
 
             # Wait until we've obtained a connection
@@ -447,23 +424,23 @@ class GCalert(object):
             now = time.time()
 
             # Remove events which were deleted or modified
-            for event_timer in self.events:
-                if not event_timer.getName() in map(lambda x: x.getName(), new_event_timers):
-                    debug('Event deleted or modified: `{0}`'.format(event_timer))
-                    event_timer.cancel()
-                    self.events.remove(event_timer)
+            for event in self.events:
+                if not event in new_events:
+                    debug('Event deleted or modified: `{0}`'.format(event))
+                    event.timer.cancel()
+                    self.events.remove(event)
 
             # Add new events to the list
-            for event_timer in new_event_timers:
-                if not event_timer.getName() in map(lambda x: x.getName(), self.events) and not event_timer.getName() in self.expired_timers:
-                    debug('Event not seen before: `{0}`'.format(event_timer))
+            for event in new_events:
+                if not event in self.events and not hash(event) in self.expired_timers:
+                    debug('Event not seen before: `{0}`'.format(event))
 
                     # Does it start in the future?
-                    event_timer.start()
-                    self.events.append(event_timer)
-                    self.expired_timers.add(event_timer.getName())
+                    event.timer.start()
+                    self.events.append(event)
+                    self.expired_timers.append(hash(event))
                 else:
-                    debug('Event already registered: `{0}`'.format(event_timer))
+                    debug('Event already registered: `{0}`'.format(event))
 
             self.events_lock.release()
 
