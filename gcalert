@@ -71,56 +71,6 @@ __program__ = 'gcalert'
 __version__ = '2.0'
 __api_client_id__     = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
 __api_client_secret__ = 'UECdkOkaoAnyYe5-4DBm31mu'
-__doc__ = '''{program} {version} - Displays reminder notifications for Google Calendar events.
-
-Usage: {executable} [options]
-
--u
---rc       Specifies the location of the gcalertrc file.
-           This file may contain one command line parameter
-           per line, and will be used to configure {program}
-           before any command line arguments are parsed.
-           (Default: {default_rc})
-
--s
---secret   Specifies the location of the oauth credentials cache.
-           (Default: {default_secret})
-
--d
---debug    Print debug messages.
-
--q
---quiet    Disable all non-debug messages.
-
--c
---check    Number of seconds between queries for new calendar events.
-           (Default: {default_query})
-
--a seconds
---alarm seconds
-           Number of seconds between checking for reminders to display.
-           (Default: {default_alarm})
-
--l days
---look days
-           Number of days to look ahead when checking for new events.
-           (Default: {default_look})
-
--r seconds
---retry seconds
-           Number of seconds to wait between reconnection attempts.
-           (Default: {default_retry})
-
--t format_string
---timeformat format_string
-           Formatting string to use for displaying event times.
-           Must be formatted according to strftime(3).
-           (Default: {default_timeformat})
-
--i icon_name
---icon icon_name
-           Sets the icon displayed in reminder notifications.
-           (Default: {default_icon})'''
 
 #-----------------------------------------------------------------------------#
 # Console output functions                                                    #
@@ -254,6 +204,7 @@ class GCalert(object):
         self.events_lock = thread.allocate_lock() # Hold to access events[]
         self.expired_timers = [] # All events which have had their timers registered
         self.calendar_service = None
+        self.connected = False
 
         # Set up ^C handler
         signal.signal(signal.SIGINT, self.stopthismadness)
@@ -304,7 +255,8 @@ class GCalert(object):
                 message('Connection lost with unknown error, will reconnect: {0}'.format(error))
                 message('Please report this as a bug.')
 
-            return (False, [])
+            self.connected = False
+            return []
 
         for event in google_events:
             # Not all events have 'where' fields, and that's okay
@@ -328,7 +280,8 @@ class GCalert(object):
 
                     event_list.append(this_event)
 
-        return (True, event_list)
+        self.connected = True
+        return event_list
 
     #-----------------------------------------------------------------------------#
     # Authentication Functions                                                    #
@@ -368,10 +321,10 @@ class GCalert(object):
         except Exception as error:
             debug('Failed to authenticate to Google: {0}'.format(error))
             message('Failed to authenticate to Google.')
-            return False # Login failed
+            self.connected = False # Login failed
 
         message('Logged in to Google Calendar')
-        return True # We're logged in
+        self.connected = True # We're logged in
 
     #-----------------------------------------------------------------------------#
     # Event Thread Handlers                                                       #
@@ -405,7 +358,7 @@ class GCalert(object):
 
     def update_events_thread(self):
         """Periodically syncs the 'events' list to what's in Google Calendar."""
-        connection_status = self.do_login()
+        self.do_login()
 
         while True:
             debug('Updating events...')
@@ -413,16 +366,15 @@ class GCalert(object):
             # Today
             range_start = datetime.datetime.now(dateutil.tz.tzlocal())
 
-            # Tomorrow, or later
+            # A few days later
             range_end = range_start + datetime.timedelta(days=settings.lookahead_days)
 
-            (connection_status, new_events) = self.date_range_query(range_start.isoformat(), range_end.isoformat())
-            # TODO This while loop won't get the date range query
-
-            # Wait until we've obtained a connection
-            while not connection_status:
-                connection_status = self.do_login()
+            # Wait until we've obtained a connection and a list of events
+            new_events = self.date_range_query(range_start.isoformat(), range_end.isoformat())
+            while not self.connected:
                 time.sleep(settings.reconnect_sleeptime)
+                self.do_login()
+                new_events = self.date_range_query(range_start.isoformat(), range_end.isoformat())
 
             self.events_lock.acquire()
             now = time.time()
@@ -488,8 +440,6 @@ class GCalertSettings(object):
     def __init__(self):
         super(GCalertSettings, self).__init__()
 
-        global __doc__
-
         self.config_directory    = '~/.config/gcalert/'
         self.abs_config_directory= os.path.expanduser(self.config_directory)
         self.secrets_filename    = '.gcalert_oauth'
@@ -505,21 +455,6 @@ class GCalertSettings(object):
         self.threads_offset      = 5                 # Offset between the two threads' runs, in seconds
         self.strftime_string     = '%H:%M %Y-%m-%d'  # String to format times with
         self.icon                = 'gtk-dialog-info' # Icon to use in notifications
-
-        # Populate the doc string with the default values
-        __doc__ = __doc__.format(
-            program            = __program__,
-            version            = __version__,
-            executable         = sys.argv[0],
-            default_rc         = self.config_directory + self.rc_filename,
-            default_secret     = self.config_directory + self.secrets_filename,
-            default_query      = self.query_sleeptime,
-            default_alarm      = self.alarm_sleeptime,
-            default_look       = self.lookahead_days,
-            default_retry      = self.reconnect_sleeptime,
-            default_timeformat = self.strftime_string,
-            default_icon       = self.icon
-        )
 
     def initialize_user_settings(self):
         """Initializes user settings from their gcalertrc and then from their commandline arguments."""
@@ -551,7 +486,7 @@ class GCalertSettings(object):
                 if o in ('-d', '--debug'):
                     self.debug_flag = True
                 elif o in ('-h', '--help'):
-                    print __doc__
+                    print self.usage()
                     sys.exit()
                 elif o in ('-q', '--quiet'):
                     self.quiet_flag = True
@@ -584,6 +519,71 @@ class GCalertSettings(object):
         except ValueError:
             message('Option {0} requires an integer parameter; use \'-h\' for help.'.format(o))
             sys.exit(1)
+
+    def usage(self):
+        return '''{program} {version} - Displays reminder notifications for Google Calendar events.
+
+Usage: {executable} [options]
+
+-u
+--rc       Specifies the location of the gcalertrc file.
+           This file may contain one command line parameter
+           per line, and will be used to configure {program}
+           before any command line arguments are parsed.
+           (Default: {default_rc})
+
+-s
+--secret   Specifies the location of the oauth credentials cache.
+           (Default: {default_secret})
+
+-d
+--debug    Print debug messages.
+
+-q
+--quiet    Disable all non-debug messages.
+
+-c
+--check    Number of seconds between queries for new calendar events.
+           (Default: {default_query})
+
+-a seconds
+--alarm seconds
+           Number of seconds between checking for reminders to display.
+           (Default: {default_alarm})
+
+-l days
+--look days
+           Number of days to look ahead when checking for new events.
+           (Default: {default_look})
+
+-r seconds
+--retry seconds
+           Number of seconds to wait between reconnection attempts.
+           (Default: {default_retry})
+
+-t format_string
+--timeformat format_string
+           Formatting string to use for displaying event times.
+           Must be formatted according to strftime(3).
+           (Default: {default_timeformat})
+
+-i icon_name
+--icon icon_name
+           Sets the icon displayed in reminder notifications.
+           (Default: {default_icon})'''.format(
+            program            = __program__,
+            version            = __version__,
+            executable         = sys.argv[0],
+            default_rc         = self.config_directory + self.rc_filename,
+            default_secret     = self.config_directory + self.secrets_filename,
+            default_query      = self.query_sleeptime,
+            default_alarm      = self.alarm_sleeptime,
+            default_look       = self.lookahead_days,
+            default_retry      = self.reconnect_sleeptime,
+            default_timeformat = self.strftime_string,
+            default_icon       = self.icon
+        )
+
 
     def __str__(self):
         """Returns a string representation of the settings."""
