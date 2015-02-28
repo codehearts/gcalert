@@ -131,12 +131,12 @@ class GCalertNotification(object):
         notification_time = (reminder_time - datetime.now(tzlocal())).total_seconds()
 
         # Initialize the timer
-        self.timer = Timer(notification_time, self.trigger_alarm)
+        self.timer = Timer(notification_time, self.notify)
         self.timer.setDaemon(True) # Run as a daemon
         self.timer.name = repr(self) # Use the hash to identify the event this timer is for
         self.timer.start()
 
-    def trigger_alarm(self):
+    def notify(self):
         """Show the alarm box for one event/recurrence"""
         message(text.bold+'\n########## ALARM ##########'+text.normal)
         message(self.get_formatted())
@@ -190,12 +190,9 @@ class GCalert(object):
     """Connects to Google Calendar and notifies about events at their reminder time."""
 
     def __init__(self):
-        global settings
-
         super(GCalert, self).__init__()
 
         # Create a global settings instance
-        settings = GCalertSettings()
         settings.initialize_user_settings()
 
         # Set GCalert properties
@@ -210,14 +207,36 @@ class GCalert(object):
 
         # Start up
         message('{0} {1} running', __program__, __version__)
-        debug('Settings: {0}', settings)
+        debug('Settings: {0}', settings.get_settings())
 
         # Start up the event processing thread
         debug('Starting event processing thread')
-        start_new_thread(self.process_events_thread, ())
 
-        self.update_events_thread()
+        # Initialize notification system
+        if not init(__program__+'/'+__version__):
+            print 'Could not initialize pynotify/libnotify!'
+            exit(1)
 
+        self.events_thread = Timer(0, self.update_events_thread)
+        self.events_thread.setDaemon(True)
+        self.events_thread.start()
+
+        self.gc_thread = Timer(settings.threads_offset, self.process_events_thread)
+        self.gc_thread.setDaemon(True)
+        self.gc_thread.start()
+
+        while True:
+            self.events_thread.join()
+            self.gc_thread.join()
+
+            self.events_thread = Timer(settings.query_sleeptime, self.update_events_thread)
+            self.events_thread.setDaemon(True)
+            self.events_thread.start()
+           
+            self.gc_thread = Timer(settings.alarm_sleeptime, self.process_events_thread)
+            self.gc_thread.setDaemon(True)
+            self.gc_thread.start()
+ 
     #-----------------------------------------------------------------------------#
     # Google Calendar Query Functions                                             #
     #-----------------------------------------------------------------------------#
@@ -331,75 +350,63 @@ class GCalert(object):
 
     def process_events_thread(self):
         """Process events and raise alarms via pynotify."""
-        # Initialize notification system
-        if not init('{0}'.format(__program__+'/'+__version__)):
-            print 'Could not initialize pynotify/libnotify!'
-            exit(1)
+        debug('Garbage collecting timers...')
 
-        sleep(settings.threads_offset) # Give a chance for the other thread to get some events
+        self.events_lock.acquire()
 
-        while True:
-            debug('Garbage collecting timers...')
+        for event in self.events:
+            if not event.timer.is_alive():
+                debug('Removed timer for `{0}`', event)
+                self.events.remove(event)
 
-            self.events_lock.acquire()
+        self.events_lock.release()
 
-            for event in self.events:
-                if not event.timer.is_alive():
-                    debug('Removed timer for `{0}`', event)
-                    self.events.remove(event)
-
-            self.events_lock.release()
-
-            debug('Done garbage collecting')
-
-            # We can't just sleep until the next event as the other thread MIGHT add something new
-            sleep(settings.alarm_sleeptime)
+        debug('Done garbage collecting')
 
     def update_events_thread(self):
         """Periodically syncs the 'events' list to what's in Google Calendar."""
         self.do_login()
 
-        while True:
-            debug('Updating events...')
+        debug('Updating events...')
 
-            # Today
-            range_start = datetime.now(tzlocal())
+        # Today
+        range_start = datetime.now(tzlocal())
 
-            # A few days later
-            range_end = range_start + timedelta(days=settings.lookahead_days)
+        # A few days later
+        range_end = range_start + timedelta(days=settings.lookahead_days)
 
-            # Wait until we've obtained a connection and a list of events
+        # Wait until we've obtained a connection and a list of events
+        new_events = self.date_range_query(range_start.isoformat(), range_end.isoformat())
+        while not self.connected:
+            sleep(settings.reconnect_sleeptime)
+            self.do_login()
             new_events = self.date_range_query(range_start.isoformat(), range_end.isoformat())
-            while not self.connected:
-                sleep(settings.reconnect_sleeptime)
-                self.do_login()
-                new_events = self.date_range_query(range_start.isoformat(), range_end.isoformat())
 
-            self.events_lock.acquire()
+        self.events_lock.acquire()
 
-            # Remove events which were deleted or modified
-            for event in self.events:
-                if not event in new_events:
-                    debug('Event deleted or modified: `{0}`', event)
-                    self.events.remove(event)
-                    event.timer.cancel() # Cancel the notification timer
+        # Remove events which were deleted or modified
+        for event in self.events:
+            if not event in new_events:
+                debug('Event deleted or modified: `{0}`', event)
+                self.events.remove(event)
+                event.timer.cancel() # Cancel the notification timer
+                event.timer.join()
 
-            # Add new events to the list
-            for event in new_events:
-                if not event in self.events and not hash(event) in self.expired_timers:
-                    debug('Event not seen before: `{0}`', event)
+        # Add new events to the list
+        for event in new_events:
+            if not event in self.events and not hash(event) in self.expired_timers:
+                debug('Event not seen before: `{0}`', event)
 
-                    # Does it start in the future?
-                    event.start_timer()
-                    self.events.append(event)
-                    self.expired_timers.append(hash(event))
-                else:
-                    debug('Event already registered: `{0}`', event)
+                # Does it start in the future?
+                event.start_timer()
+                self.events.append(event)
+                self.expired_timers.append(hash(event))
+            else:
+                debug('Event already registered: `{0}`', event)
 
-            self.events_lock.release()
+        self.events_lock.release()
 
-            debug('Finished updating events')
-            sleep(settings.query_sleeptime)
+        debug('Finished updating events')
 
     #-----------------------------------------------------------------------------#
     # Signal Handlers                                                             #
@@ -410,6 +417,15 @@ class GCalert(object):
     def stopthismadness(self, signal, frame):
         """Halts execution and exits. Intended for SIGINT (^C)."""
         message('Shutting down on SIGINT.')
+        for event in self.events:
+            event.timer.cancel()
+            event.timer.join()
+
+        self.events_thread.cancel()
+        self.gc_thread.cancel()
+
+        self.events_thread.join()
+        self.gc_thread.join()
         exit(0)
 
 #-----------------------------------------------------------------------------#
@@ -432,44 +448,48 @@ class text:
 # GCalert Settings                                                            #
 #-----------------------------------------------------------------------------#
 
-class GCalertSettings(object):
+class settings(object):
     """Stores all settings for this gcalert instance."""
 
-    def __init__(self):
-        super(GCalertSettings, self).__init__()
+    config_directory     = '~/.config/gcalert/'
+    abs_config_directory = None
+    secrets_filename     = '.gcalert_oauth'
+    rc_filename          = 'gcalertrc'
+    secrets_file         = None
+    rc_file              = None
+    alarm_sleeptime      = 300               # Seconds between waking up to check the alarm list
+    query_sleeptime      = 180               # Seconds between querying for new events
+    lookahead_days       = 3                 # Look this many days in the future
+    debug_flag           = False             # Display debug messages
+    quiet_flag           = False             # Suppresses all non-debug messages
+    reconnect_sleeptime  = 300               # Seconds between reconnects in case of errors
+    threads_offset       = 5                 # Offset between the two threads' runs, in seconds
+    strftime_string      = '%H:%M %Y-%m-%d'  # String to format times with
+    icon                 = 'gtk-dialog-info' # Icon to use in notifications
 
-        self.config_directory    = '~/.config/gcalert/'
-        self.abs_config_directory= path.expanduser(self.config_directory)
-        self.secrets_filename    = '.gcalert_oauth'
-        self.rc_filename         = 'gcalertrc'
-        self.secrets_file        = path.join(self.abs_config_directory, self.secrets_filename)
-        self.rc_file             = path.join(self.abs_config_directory, self.rc_filename)
-        self.alarm_sleeptime     = 30                # Seconds between waking up to check the alarm list
-        self.query_sleeptime     = 180               # Seconds between querying for new events
-        self.lookahead_days      = 3                 # Look this many days in the future
-        self.debug_flag          = False             # Display debug messages
-        self.quiet_flag          = False             # Suppresses all non-debug messages
-        self.reconnect_sleeptime = 300               # Seconds between reconnects in case of errors
-        self.threads_offset      = 5                 # Offset between the two threads' runs, in seconds
-        self.strftime_string     = '%H:%M %Y-%m-%d'  # String to format times with
-        self.icon                = 'gtk-dialog-info' # Icon to use in notifications
-
-    def initialize_user_settings(self):
+    @staticmethod
+    def initialize_user_settings():
         """Initializes user settings from their gcalertrc and then from their commandline arguments."""
+        # TODO Parse the commandline rcfile argument before actually parsing the rcfile
+        settings.abs_config_directory = path.expanduser(settings.config_directory)
+        settings.secrets_file         = path.join(settings.abs_config_directory, settings.secrets_filename)
+        settings.rc_file              = path.join(settings.abs_config_directory, settings.rc_filename)
+
         # Create the config directory if it doesn't already exist
-        if not path.exists(self.abs_config_directory):
-            makedirs(self.abs_config_directory)
+        if not path.exists(settings.abs_config_directory):
+            makedirs(settings.abs_config_directory)
 
         # Handle gcalertrc file arguments
-        if path.exists(self.rc_file):
-            with open(self.rc_file, 'r') as rc_file:
+        if path.exists(settings.rc_file):
+            with open(settings.rc_file, 'r') as rc_file:
                 rc_arguments = rc_file.read().splitlines()
-            self.handle_arguments(rc_arguments)
+            settings.handle_arguments(rc_arguments)
 
         # Handle command line arguments
-        self.handle_arguments(argv[1:])
+        settings.handle_arguments(argv[1:])
 
-    def handle_arguments(self, args):
+    @staticmethod
+    def handle_arguments(args):
         """Parses the given list of commandline arguments."""
         try:
             opts, args = getopt(
@@ -482,43 +502,44 @@ class GCalertSettings(object):
         try:
             for o, a in opts:
                 if o in ('-d', '--debug'):
-                    self.debug_flag = True
+                    settings.debug_flag = True
                 elif o in ('-h', '--help'):
-                    print self.usage()
+                    print usage()
                     exit()
                 elif o in ('-q', '--quiet'):
-                    self.quiet_flag = True
+                    settings.quiet_flag = True
                 elif o in ('-s', '--secret'):
-                    self.secrets_file = a
-                    debug('Secrets file set to {0}', self.secrets_file)
+                    settings.secrets_file = a
+                    debug('Secrets file set to {0}', settings.secrets_file)
                 elif o in ('-u', '--rc'):
-                    self.rc_file = a
-                    debug('gcalertrc file set to {0}', self.rc_file)
+                    settings.rc_file = a
+                    debug('gcalertrc file set to {0}', settings.rc_file)
                 elif o in ('-c', '--check'):
-                    self.query_sleeptime = max(int(a), 5)
-                    debug('Query sleep time set to {0}', self.query_sleeptime)
+                    settings.query_sleeptime = max(int(a), 5)
+                    debug('Query sleep time set to {0}', settings.query_sleeptime)
                 elif o in ('-a', '--alarm'):
-                    self.alarm_sleeptime = int(a)
-                    debug('Alarm sleep time set to {0}', self.alarm_sleeptime)
+                    settings.alarm_sleeptime = int(a)
+                    debug('Alarm sleep time set to {0}', settings.alarm_sleeptime)
                 elif o in ('-l', "--look"):
-                    self.lookahead_days = int(a)
-                    debug('Lookahead days set to {0}', self.lookahead_days)
+                    settings.lookahead_days = int(a)
+                    debug('Lookahead days set to {0}', settings.lookahead_days)
                 elif o in ('-r', '--retry'):
-                    self.reconnect_sleeptime = int(a)
-                    debug('Reconnect sleep time set to {0}', self.reconnect_sleeptime)
+                    settings.reconnect_sleeptime = int(a)
+                    debug('Reconnect sleep time set to {0}', settings.reconnect_sleeptime)
                 elif o in ('-t', '--timeformat'):
-                    self.strftime_string = a
-                    debug("strftime format string set to {0}", self.strftime_string)
+                    settings.strftime_string = a
+                    debug("strftime format string set to {0}", settings.strftime_string)
                 elif o in ('-i', '--icon'):
-                    self.icon = a
-                    debug('Icon set to {0}', self.icon)
+                    settings.icon = a
+                    debug('Icon set to {0}', settings.icon)
                 else:
                     assert False, 'Unsupported argument'
         except ValueError:
             message('Option {0} requires an integer parameter; use \'-h\' for help.', o)
             exit(1)
 
-    def usage(self):
+    @staticmethod
+    def usage():
         return '''{program} {version} - Displays reminder notifications for Google Calendar events.
 
 Usage: {executable} [options]
@@ -572,18 +593,18 @@ Usage: {executable} [options]
             program            = __program__,
             version            = __version__,
             executable         = argv[0],
-            default_rc         = self.config_directory + self.rc_filename,
-            default_secret     = self.config_directory + self.secrets_filename,
-            default_query      = self.query_sleeptime,
-            default_alarm      = self.alarm_sleeptime,
-            default_look       = self.lookahead_days,
-            default_retry      = self.reconnect_sleeptime,
-            default_timeformat = self.strftime_string,
-            default_icon       = self.icon
+            default_rc         = settings.config_directory + settings.rc_filename,
+            default_secret     = settings.config_directory + settings.secrets_filename,
+            default_query      = settings.query_sleeptime,
+            default_alarm      = settings.alarm_sleeptime,
+            default_look       = settings.lookahead_days,
+            default_retry      = settings.reconnect_sleeptime,
+            default_timeformat = settings.strftime_string,
+            default_icon       = settings.icon
         )
 
-
-    def __str__(self):
+    @staticmethod
+    def get_settings():
         """Returns a string representation of the settings."""
         return '''
             Secrets file:         {secrets_file}
@@ -597,16 +618,16 @@ Usage: {executable} [options]
             strftime format:      {strftime_str}
             Icon:                 {icon}
         '''.format(
-            secrets_file   = self.secrets_file,
-            alarm_time     = self.alarm_sleeptime,
-            query_time     = self.query_sleeptime,
-            lookahead      = self.lookahead_days,
-            debug          = self.debug_flag,
-            quiet          = self.quiet_flag,
-            reconnect_time = self.reconnect_sleeptime,
-            thread_offset  = self.threads_offset,
-            strftime_str   = self.strftime_string,
-            icon           = self.icon
+            secrets_file   = settings.secrets_file,
+            alarm_time     = settings.alarm_sleeptime,
+            query_time     = settings.query_sleeptime,
+            lookahead      = settings.lookahead_days,
+            debug          = settings.debug_flag,
+            quiet          = settings.quiet_flag,
+            reconnect_time = settings.reconnect_sleeptime,
+            thread_offset  = settings.threads_offset,
+            strftime_str   = settings.strftime_string,
+            icon           = settings.icon
         )
 
 
