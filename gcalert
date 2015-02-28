@@ -135,7 +135,7 @@ def message(message):
 def debug(message):
     """Prints the given message if the debug_flag is set (running with -d or --debug)."""
     if settings.debug_flag:
-        print '{timestamp} (DEBUG): in {function}: {message}'.format(
+        print '{timestamp} in {function}: {message}'.format(
             timestamp=time.asctime(), executable=sys.argv[0],
             function=sys._getframe(1).f_code.co_name, message=message)
         sys.stdout.flush()
@@ -224,6 +224,9 @@ class GCalertNotification(object):
             minutes  = self.minutes
         )
 
+    def __eq__(self, other):
+        return hash(self) == hash(other)
+
     def __hash__(self):
         return hash(str(self))
 
@@ -282,12 +285,13 @@ class GCalert(object):
 
         try:
             # Get the id for each calendar
-            cal_ids = map(lambda x: x['id'], self.calendar_service.calendarList().list().execute()['items'])
+            calendars = self.calendar_service.calendarList().list().execute()['items']
 
-            for cal_id in cal_ids:
-                debug('Processing calendar: {0}'.format(cal_id))
+            for calendar in calendars:
+                debug('Processing calendar: {0}'.format(calendar['summary']))
 
-                query = self.calendar_service.events().list(calendarId=cal_id,timeMin=start_date,timeMax=end_date,singleEvents=True).execute()
+                query = self.calendar_service.events().list(
+                    calendarId=calendar['id'],timeMin=start_date,timeMax=end_date,singleEvents=True).execute()
                 google_events += query['items']
 
                 debug('Events so far: {0}'.format(len(google_events)))
@@ -320,7 +324,7 @@ class GCalert(object):
                         event['end']['dateTime'],
                         reminder['minutes'])
 
-                    debug('New GCalertNotification instance: {0}'.format(this_event))
+                    debug('New notification set: {0}'.format(this_event))
 
                     event_list.append(this_event)
 
@@ -389,7 +393,7 @@ class GCalert(object):
 
             for event in self.events:
                 if not event.timer.is_alive():
-                    debug('Removing event timer `{0}`'.format(event))
+                    debug('Removed timer for `{0}`'.format(event))
                     self.events.remove(event)
 
             self.events_lock.release()
@@ -404,7 +408,7 @@ class GCalert(object):
         connection_status = self.do_login()
 
         while True:
-            debug('Updating events thread...')
+            debug('Updating events...')
 
             # Today
             range_start = datetime.datetime.now(dateutil.tz.tzlocal())
@@ -427,8 +431,8 @@ class GCalert(object):
             for event in self.events:
                 if not event in new_events:
                     debug('Event deleted or modified: `{0}`'.format(event))
-                    event.timer.cancel()
                     self.events.remove(event)
+                    event.timer.cancel() # Cancel the notification timer
 
             # Add new events to the list
             for event in new_events:
@@ -444,7 +448,7 @@ class GCalert(object):
 
             self.events_lock.release()
 
-            debug('Finished')
+            debug('Finished updating events')
             time.sleep(settings.query_sleeptime)
 
     #-----------------------------------------------------------------------------#
