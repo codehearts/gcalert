@@ -30,9 +30,9 @@
 # ----------------------------------------------------------------------------
 
 from os import path, makedirs
-from time import sleep, asctime
 from signal import signal, SIGINT
 from getopt import GetoptError, getopt
+from time import sleep, asctime, mktime
 from datetime import datetime, timedelta
 from sys import exit, argv, stdout, _getframe
 from thread import start_new_thread, allocate_lock
@@ -83,10 +83,13 @@ def debug(message, *args, **kwargs):
     """Prints the given message if the debug_flag is set (running with -d or --debug)."""
     if settings.debug_flag:
         message = message.format(*args, **kwargs)
-        print '{timestamp} in {function}: {message}'.format(
-            timestamp=asctime(), executable=argv[0],
-            function=_getframe(1).f_code.co_name, message=message)
+        print '{0} in {1}: {2}'.format(
+            asctime(), _getframe(1).f_code.co_name, message)
         stdout.flush()
+
+def get_unix_timestamp(time):
+    """Converts a datetime object to a UNIX timestamp int."""
+    return mktime(time.timetuple())
 
 #-----------------------------------------------------------------------------#
 # Calendar Notifications Class                                                #
@@ -109,7 +112,6 @@ class GCalertNotification(object):
         self.where   = where
         self.start   = parse_time(start_string)
         self.minutes = minutes
-        self.reminder_time = self.start - timedelta(minutes=self.minutes)
 
         # Google sometimes does not supply timezones
         # (for events that last more than a day and have no time set, apparently)
@@ -122,6 +124,8 @@ class GCalertNotification(object):
             self.start = self.start.replace(tzinfo=tzlocal())
 
         self.start_str = self.start.astimezone(tzlocal()).strftime(settings.strftime_string)
+        self.reminder_time = get_unix_timestamp(self.start - timedelta(minutes=self.minutes)) # Store only the UNIX timestamp
+        self.start = get_unix_timestamp(self.start) # Store only the UNIX timestamp
 
     def notify(self):
         """Show the alarm box for one event/recurrence"""
@@ -214,6 +218,7 @@ class GCalert(object):
         Returns:
             A tuple in the format (<success boolean>, <list of events>).
         """
+        debug('Querying for new events...')
         google_events = [] # Events in all Google Calendars
         event_list    = [] # Our parsed events list
 
@@ -239,6 +244,7 @@ class GCalert(object):
                 message('Please report this as a bug.')
 
             self.connected = False
+            debug('Done querying for new events')
             return []
 
         for event in google_events:
@@ -264,6 +270,7 @@ class GCalert(object):
                     event_list.append(this_event)
 
         self.connected = True
+        debug('Done querying for new events')
         return event_list
 
     #-----------------------------------------------------------------------------#
@@ -323,7 +330,7 @@ class GCalert(object):
         sleep(settings.threads_offset) # Give a chance for the other thread to get some events
 
         while True:
-            now = datetime.now(tzlocal())
+            now = get_unix_timestamp(datetime.now(tzlocal())) # Get the current UNIX timestamp
             debug('Processing events...')
 
             self.events_lock.acquire()
