@@ -25,7 +25,7 @@ You can simply download the [`gcalcli`](https://aur.archlinux.org/packages/gcale
 - GUI and status bar icon.
 - Add `systemd` scripts to Arch package
 - Parameter for changing notification text formatting
-- Use and store hashes to recognize events that have already been seen
+- Reduce memory overhead from third party libraries
 
 ## License
 
