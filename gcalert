@@ -251,6 +251,10 @@ class GCalert(object):
             # Not all events have 'where' fields, and that's okay
             where = event['location'] if ('location' in event) else ''
 
+            # Skip events with not overrides key in their reminders dict
+            if not 'overrides' in event['reminders']:
+                continue
+
             # Create a GCalertNotification out of each (event x reminder x occurrence)
             for reminder in event['reminders']['overrides']:
                 debug('Event `{0}` notification method: {1}', event['summary'], reminder['method'])
