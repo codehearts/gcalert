@@ -52,7 +52,7 @@ try:
     from httplib2 import Http
     from oauth2client.file import Storage
     from oauth2client.tools import run_flow, argparser
-    from apiclient.discovery import build
+    from googleapiclient.discovery import build
     from oauth2client.client import OAuth2WebServerFlow
 except ImportError as e:
     print('Dependency was not found! {0}\n'.format(e))
@@ -75,7 +75,7 @@ __api_client_secret__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
 def message(message, *args, **kwargs):
     """Prints the given message and flushes the buffer; useful when redirected to a file."""
-    if not settings.quiet_flag:
+    if not settings.quiet_flag or 'force' in kwargs:
         print(message.format(*args, **kwargs))
         stdout.flush()
 
@@ -496,7 +496,7 @@ class settings(object):
                 if o in ('-d', '--debug'):
                     settings.debug_flag = True
                 elif o in ('-h', '--help'):
-                    message(usage())
+                    message(settings.usage(), force=True)
                     exit()
                 elif o in ('-q', '--quiet'):
                     settings.quiet_flag = True
