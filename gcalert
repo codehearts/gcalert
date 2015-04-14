@@ -202,7 +202,8 @@ class GCalert(object):
 
         # Start up the event processing thread
         debug('Starting event processing thread')
-        Thread(target=self.process_events_thread).start()
+        self.thread = Thread(target=self.process_events_thread)
+        self.thread.start()
 
         self.update_events_thread()
  
@@ -312,6 +313,7 @@ class GCalert(object):
             debug('Failed to authenticate to Google: {0}', error)
             message('Failed to authenticate to Google.')
             self.connected = False # Login failed
+            return
 
         message('Logged in to Google Calendar')
         self.connected = True # We're logged in
