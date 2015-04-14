@@ -202,8 +202,7 @@ class GCalert(object):
 
         # Start up the event processing thread
         debug('Starting event processing thread')
-        self.thread = Thread(target=self.process_events_thread)
-        self.thread.start()
+        Thread(target=self.process_events_thread, daemon=True).start()
 
         self.update_events_thread()
  
@@ -331,42 +330,46 @@ class GCalert(object):
 
         sleep(settings.threads_offset) # Give a chance for the other thread to get some events
 
-        while True:
-            now = get_unix_timestamp(datetime.now(tzlocal())) # Get the current UNIX timestamp
-            debug('Processing events...')
+        try:
+            while True:
+                now = get_unix_timestamp(datetime.now(tzlocal())) # Get the current UNIX timestamp
+                debug('Processing events...')
 
-            self.events_lock.acquire()
+                self.events_lock.acquire()
 
-            for event in self.events:
-                event_hash = hash(event)
+                for event in self.events:
+                    event_hash = hash(event)
 
-                if event.start < now:
-                    debug('Removing event `{0}`', event)
-                    self.events.remove(event)
+                    if event.start < now:
+                        debug('Removing event `{0}`', event)
+                        self.events.remove(event)
 
-                    # Also free up some memory
-                    if event_hash in self.notified_events:
-                        self.notified_events.remove(event_hash)
-                # If it starts in the future, check for alarm times if it wasn't alarmed yet
-                elif event_hash not in self.notified_events:
-                    # Check the notification time. If it's now-ish, raise the notification,
-                    # otherwise let the event sleep some more
+                        # Also free up some memory
+                        if event_hash in self.notified_events:
+                            self.notified_events.remove(event_hash)
+                    # If it starts in the future, check for alarm times if it wasn't alarmed yet
+                    elif event_hash not in self.notified_events:
+                        # Check the notification time. If it's now-ish, raise the notification,
+                        # otherwise let the event sleep some more
 
-                    # Notify now if the notification time has passed
-                    if now >= event.reminder_time:
-                        event.notify()
-                        self.notified_events.append(event_hash)
+                        # Notify now if the notification time has passed
+                        if now >= event.reminder_time:
+                            event.notify()
+                            self.notified_events.append(event_hash)
+                        else:
+                            debug('Not ready to notify about event `{0}`', event)
                     else:
-                        debug('Not ready to notify about event `{0}`', event)
-                else:
-                    debug('Already notified for event `{0}`', event)
+                        debug('Already notified for event `{0}`', event)
 
-            self.events_lock.release()
+                self.events_lock.release()
 
-            debug('Finished processing events')
+                debug('Finished processing events')
 
-            # We can't just sleep until the next event as the other thread MIGHT add something new
-            sleep(settings.alarm_sleeptime)
+                # We can't just sleep until the next event as the other thread MIGHT add something new
+                sleep(settings.alarm_sleeptime)
+        except KeyboardInterrupt:
+            # Break if this thread was interrupted
+            pass
 
     def update_events_thread(self):
         """Periodically syncs the 'events' list to what's in Google Calendar."""
