@@ -1,7 +1,7 @@
 # Maintainer: Nate Hart <nejthan@gmail.com>
 
 pkgname=gcalert
-pkgver=3.0
+pkgver=3.2
 pkgrel=2
 pkgdesc='Lightweight Google Calendar notifications'
 arch=('any')
@@ -9,7 +9,7 @@ url=https://github.com/nejsan/gcalert
 license=('GPL')
 depends=('libnotify' 'python-google-api-python-client' 'python-notify2' 'python-dateutil')
 source=("$pkgname-$pkgver::https://raw.githubusercontent.com/nejsan/gcalert/v$pkgver/gcalert")
-sha256sums=('1c7c6b50efce988428990276ed92a94b01986278bdb5189b4c3a06cb733e354f')
+sha256sums=('28f1789c7d5ac7e8159118c3bf1e0d9c5904357f75d3fae8ab17ed7ad52fe08d')
 
 prepare() {
   sed -i -e "1s/$/2/" gcalert-$pkgver
