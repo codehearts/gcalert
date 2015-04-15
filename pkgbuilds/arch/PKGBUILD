@@ -9,7 +9,7 @@ url=https://github.com/nejsan/gcalert
 license=('GPL')
 depends=('libnotify' 'python-google-api-python-client' 'python-notify2' 'python-dateutil')
 source=("$pkgname-$pkgver::https://raw.githubusercontent.com/nejsan/gcalert/v$pkgver/gcalert")
-sha256sums=('63717ff1a002905cbf5d26944891375ee4a62423477a515fd8ea0b3661b87784')
+sha256sums=('28f1789c7d5ac7e8159118c3bf1e0d9c5904357f75d3fae8ab17ed7ad52fe08d')
 
 prepare() {
   sed -i -e "1s/$/2/" gcalert-$pkgver
