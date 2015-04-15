@@ -2,7 +2,7 @@
 
 pkgname=gcalert
 pkgver=3.2
-pkgrel=4
+pkgrel=5
 pkgdesc='Lightweight Google Calendar notifications'
 arch=('any')
 url=https://github.com/nejsan/gcalert
@@ -12,7 +12,7 @@ source=("$pkgname-$pkgver::https://raw.githubusercontent.com/nejsan/gcalert/v$pk
 sha256sums=('81ea48b99cbe0baa40295114ecf7c5c6a7acc4eeb774cc28ae4579f5bb70dd02')
 
 prepare() {
-  sed -i -e "1s/$/2/" gcalert-$pkgver
+  sed -i -e "1s/3$//" gcalert-$pkgver
 }
 
 package() {
