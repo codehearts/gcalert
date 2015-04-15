@@ -31,18 +31,18 @@
 
 from os import path, makedirs
 from signal import signal, SIGINT
+from threading import Thread, Lock
 from getopt import GetoptError, getopt
 from time import sleep, asctime, mktime
 from datetime import datetime, timedelta
 from sys import exit, argv, stdout, _getframe
-from thread import start_new_thread, allocate_lock
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 
 # Dependencies below come from separate packages, the rest (above) are in the
 # standard library so those are expected to work :)
 try:
     # libnotify handler
-    from pynotify import init, Notification, EXPIRES_NEVER
+    from notify2 import init, Notification, EXPIRES_NEVER
 
     # Date parser and timezone handler
     from dateutil.tz import tzlocal
@@ -52,12 +52,12 @@ try:
     from httplib2 import Http
     from oauth2client.file import Storage
     from oauth2client.tools import run_flow, argparser
-    from apiclient.discovery import build
+    from googleapiclient.discovery import build
     from oauth2client.client import OAuth2WebServerFlow
 except ImportError as e:
-    print 'Dependency was not found! {0}\n'.format(e)
-    print 'For Debian/Ubuntu, try:'
-    print '\tsudo apt-get install python-notify python-dateutil python-googleapi notification-daemon'
+    print('Dependency was not found! {0}\n'.format(e))
+    print('For Debian/Ubuntu, try:')
+    print('\tsudo apt-get install python-notify python-dateutil python-googleapi notification-daemon')
     exit(1)
 
 #-----------------------------------------------------------------------------#
@@ -65,7 +65,7 @@ except ImportError as e:
 #-----------------------------------------------------------------------------#
 
 __program__ = 'gcalert'
-__version__ = '2.0'
+__version__ = '3.2'
 __api_client_id__     = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
 __api_client_secret__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
@@ -75,16 +75,16 @@ __api_client_secret__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
 def message(message, *args, **kwargs):
     """Prints the given message and flushes the buffer; useful when redirected to a file."""
-    if not settings.quiet_flag:
-        print message.format(*args, **kwargs)
+    if not settings.quiet_flag or 'force' in kwargs:
+        print(message.format(*args, **kwargs))
         stdout.flush()
 
 def debug(message, *args, **kwargs):
     """Prints the given message if the debug_flag is set (running with -d or --debug)."""
     if settings.debug_flag:
         message = message.format(*args, **kwargs)
-        print '{0} in {1}: {2}'.format(
-            asctime(), _getframe(1).f_code.co_name, message)
+        print('{0} in {1}: {2}'.format(
+            asctime(), _getframe(1).f_code.co_name, message))
         stdout.flush()
 
 def get_unix_timestamp(time):
@@ -188,10 +188,12 @@ class GCalert(object):
 
         # Set GCalert properties
         self.events = [] # All events seen so far that are yet to start
-        self.events_lock = allocate_lock() # Hold to access events[]
+        self.events_lock = Lock() # Hold to access events[]
         self.notified_events = [] # All events which have had their timers registered
         self.calendar_service = None
         self.connected = False
+
+        self.do_login()
 
         # Set up ^C handler
         signal(SIGINT, self.stopthismadness)
@@ -202,7 +204,7 @@ class GCalert(object):
 
         # Start up the event processing thread
         debug('Starting event processing thread')
-        start_new_thread(self.process_events_thread, ())
+        Thread(target=self.process_events_thread, daemon=True).start()
 
         self.update_events_thread()
  
@@ -250,6 +252,10 @@ class GCalert(object):
         for event in google_events:
             # Not all events have 'where' fields, and that's okay
             where = event['location'] if ('location' in event) else ''
+
+            # Skip events with not overrides key in their reminders dict
+            if not 'overrides' in event['reminders']:
+                continue
 
             # Create a GCalertNotification out of each (event x reminder x occurrence)
             for reminder in event['reminders']['overrides']:
@@ -302,7 +308,7 @@ class GCalert(object):
                     parents         = [argparser])
 
                 # Parse the command-line flags
-                flags = parser.parse_args(argv[1:])
+                flags = parser.parse_args([])
 
                 credentials = run_flow(flow, storage, flags)
 
@@ -312,6 +318,7 @@ class GCalert(object):
             debug('Failed to authenticate to Google: {0}', error)
             message('Failed to authenticate to Google.')
             self.connected = False # Login failed
+            return
 
         message('Logged in to Google Calendar')
         self.connected = True # We're logged in
@@ -324,52 +331,54 @@ class GCalert(object):
         """Process events and raise alarms via pynotify."""
         # Initialize notification system
         if not init(__program__+'/'+__version__):
-            print 'Could not initialize pynotify/libnotify!'
+            message('Could not initialize pynotify/libnotify!')
             exit(1)
 
         sleep(settings.threads_offset) # Give a chance for the other thread to get some events
 
-        while True:
-            now = get_unix_timestamp(datetime.now(tzlocal())) # Get the current UNIX timestamp
-            debug('Processing events...')
+        try:
+            while True:
+                now = get_unix_timestamp(datetime.now(tzlocal())) # Get the current UNIX timestamp
+                debug('Processing events...')
 
-            self.events_lock.acquire()
+                self.events_lock.acquire()
 
-            for event in self.events:
-                event_hash = hash(event)
+                for event in self.events:
+                    event_hash = hash(event)
 
-                if event.start < now:
-                    debug('Removing event `{0}`', event)
-                    self.events.remove(event)
+                    if event.start < now:
+                        debug('Removing event `{0}`', event)
+                        self.events.remove(event)
 
-                    # Also free up some memory
-                    if event_hash in self.notified_events:
-                        self.notified_events.remove(event_hash)
-                # If it starts in the future, check for alarm times if it wasn't alarmed yet
-                elif event_hash not in self.notified_events:
-                    # Check the notification time. If it's now-ish, raise the notification,
-                    # otherwise let the event sleep some more
+                        # Also free up some memory
+                        if event_hash in self.notified_events:
+                            self.notified_events.remove(event_hash)
+                    # If it starts in the future, check for alarm times if it wasn't alarmed yet
+                    elif event_hash not in self.notified_events:
+                        # Check the notification time. If it's now-ish, raise the notification,
+                        # otherwise let the event sleep some more
 
-                    # Notify now if the notification time has passed
-                    if now >= event.reminder_time:
-                        event.notify()
-                        self.notified_events.append(event_hash)
+                        # Notify now if the notification time has passed
+                        if now >= event.reminder_time:
+                            event.notify()
+                            self.notified_events.append(event_hash)
+                        else:
+                            debug('Not ready to notify about event `{0}`', event)
                     else:
-                        debug('Not ready to notify about event `{0}`', event)
-                else:
-                    debug('Already notified for event `{0}`', event)
+                        debug('Already notified for event `{0}`', event)
 
-            self.events_lock.release()
+                self.events_lock.release()
 
-            debug('Finished processing events')
+                debug('Finished processing events')
 
-            # We can't just sleep until the next event as the other thread MIGHT add something new
-            sleep(settings.alarm_sleeptime)
+                # We can't just sleep until the next event as the other thread MIGHT add something new
+                sleep(settings.alarm_sleeptime)
+        except KeyboardInterrupt:
+            # Break if this thread was interrupted
+            pass
 
     def update_events_thread(self):
         """Periodically syncs the 'events' list to what's in Google Calendar."""
-        self.do_login()
-
         while True:
             debug('Updating events...')
 
@@ -455,14 +464,14 @@ class settings(object):
     debug_flag           = False             # Display debug messages
     quiet_flag           = False             # Suppresses all non-debug messages
     reconnect_sleeptime  = 300               # Seconds between reconnects in case of errors
-    threads_offset       = 5                 # Offset between the two threads' runs, in seconds
+    threads_offset       = 2                 # Offset between the two threads' runs, in seconds
     strftime_string      = '%H:%M %Y-%m-%d'  # String to format times with
     icon                 = 'gtk-dialog-info' # Icon to use in notifications
 
     @staticmethod
     def initialize_user_settings():
         """Initializes user settings from their gcalertrc and then from their commandline arguments."""
-        # TODO Parse the commandline rcfile argument before actually parsing the rcfile
+        # TODO Parse the command line rcfile argument before actually parsing the rcfile
         settings.abs_config_directory = path.expanduser(settings.config_directory)
         settings.secrets_file         = path.join(settings.abs_config_directory, settings.secrets_filename)
         settings.rc_file              = path.join(settings.abs_config_directory, settings.rc_filename)
@@ -488,7 +497,7 @@ class settings(object):
                 args, 'hdqs:u:c:a:l:r:t:i:', ['help', 'debug', 'quiet', 'secret=', 'rc=', 'check=', 'alarm=', 'look=', 'retry=', 'timeformat=', 'icon='])
         except GetoptError as err:
             # Print help information and exit:
-            print str(err) # Will print something like "option -a not recognized"
+            print(err) # Will print something like "option -a not recognized"
             exit(2)
 
         try:
@@ -496,7 +505,7 @@ class settings(object):
                 if o in ('-d', '--debug'):
                     settings.debug_flag = True
                 elif o in ('-h', '--help'):
-                    print usage()
+                    message(settings.usage(), force=True)
                     exit()
                 elif o in ('-q', '--quiet'):
                     settings.quiet_flag = True
