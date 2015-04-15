@@ -65,7 +65,7 @@ except ImportError as e:
 #-----------------------------------------------------------------------------#
 
 __program__ = 'gcalert'
-__version__ = '2.0'
+__version__ = '3.2'
 __api_client_id__     = '447177524849-hh9ogtma7pgbkm39v1br6qa3h3cal9u9.apps.googleusercontent.com'
 __api_client_secret__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 
@@ -193,6 +193,8 @@ class GCalert(object):
         self.calendar_service = None
         self.connected = False
 
+        self.do_login()
+
         # Set up ^C handler
         signal(SIGINT, self.stopthismadness)
 
@@ -302,7 +304,7 @@ class GCalert(object):
                     parents         = [argparser])
 
                 # Parse the command-line flags
-                flags = parser.parse_args(argv[1:])
+                flags = parser.parse_args([])
 
                 credentials = run_flow(flow, storage, flags)
 
@@ -373,8 +375,6 @@ class GCalert(object):
 
     def update_events_thread(self):
         """Periodically syncs the 'events' list to what's in Google Calendar."""
-        self.do_login()
-
         while True:
             debug('Updating events...')
 
@@ -460,14 +460,14 @@ class settings(object):
     debug_flag           = False             # Display debug messages
     quiet_flag           = False             # Suppresses all non-debug messages
     reconnect_sleeptime  = 300               # Seconds between reconnects in case of errors
-    threads_offset       = 5                 # Offset between the two threads' runs, in seconds
+    threads_offset       = 2                 # Offset between the two threads' runs, in seconds
     strftime_string      = '%H:%M %Y-%m-%d'  # String to format times with
     icon                 = 'gtk-dialog-info' # Icon to use in notifications
 
     @staticmethod
     def initialize_user_settings():
         """Initializes user settings from their gcalertrc and then from their commandline arguments."""
-        # TODO Parse the commandline rcfile argument before actually parsing the rcfile
+        # TODO Parse the command line rcfile argument before actually parsing the rcfile
         settings.abs_config_directory = path.expanduser(settings.config_directory)
         settings.secrets_file         = path.join(settings.abs_config_directory, settings.secrets_filename)
         settings.rc_file              = path.join(settings.abs_config_directory, settings.rc_filename)
