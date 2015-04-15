@@ -9,7 +9,7 @@ Also; getting 'thrown out' from Google Services is apparently normal, and gcaler
 
 ## Installation
 #### Arch Linux
-You can simply download the [`gcalcli`](https://aur.archlinux.org/packages/gcalert/) package from the AUR.
+You can simply download the [`gcalert`](https://aur.archlinux.org/packages/gcalert/) package from the AUR.
 
 ## Requirements
 #### Debian/Ubuntu Packages
@@ -25,7 +25,6 @@ You can simply download the [`gcalcli`](https://aur.archlinux.org/packages/gcale
 - GUI and status bar icon.
 - Add `systemd` scripts to Arch package
 - Parameter for changing notification text formatting
-- Reduce memory overhead from third party libraries
 
 ## License
 
