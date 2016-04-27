@@ -29,14 +29,16 @@
 #
 # ----------------------------------------------------------------------------
 
-from os import path, makedirs
 from signal import signal, SIGINT
 from threading import Thread, Lock
-from getopt import GetoptError, getopt
-from time import sleep, asctime, mktime
+from time import sleep, asctime
 from datetime import datetime, timedelta
 from sys import exit, argv, stdout, _getframe
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from notification import GCalertNotification
+
+import settings
+from utils import output, time
 
 # Dependencies below come from separate packages, the rest (above) are in the
 # standard library so those are expected to work :)
@@ -73,12 +75,6 @@ __api_client_secret__ = 'UECdkOkaoAnyYe5-4DBm31mu'
 # Console output functions                                                    #
 #-----------------------------------------------------------------------------#
 
-def message(message, *args, **kwargs):
-    """Prints the given message and flushes the buffer; useful when redirected to a file."""
-    if not settings.quiet_flag or 'force' in kwargs:
-        print(message.format(*args, **kwargs))
-        stdout.flush()
-
 def debug(message, *args, **kwargs):
     """Prints the given message if the debug_flag is set (running with -d or --debug)."""
     if settings.debug_flag:
@@ -86,90 +82,6 @@ def debug(message, *args, **kwargs):
         print('{0} in {1}: {2}'.format(
             asctime(), _getframe(1).f_code.co_name, message))
         stdout.flush()
-
-def get_unix_timestamp(time):
-    """Converts a datetime object to a UNIX timestamp int."""
-    return mktime(time.timetuple())
-
-#-----------------------------------------------------------------------------#
-# Calendar Notifications Class                                                #
-#-----------------------------------------------------------------------------#
-
-class GCalertNotification(object):
-    """Represents an instance of a calendar alarm for an event."""
-
-    def __init__(self, title, where, start_string, end_string, minutes):
-        """Creates a new alarm for the given event.
-
-        Args:
-            title (str): The title of the event.
-            where (str): The location of the event, or an empty string.
-            start_string (str): The start time of the event as a string.
-            end_string (str): The end time of the event as a string.
-            minutes (int): How many minutes before the start of the event to set off the alarm.
-        """
-        self.title   = title
-        self.where   = where
-        self.start   = parse_time(start_string)
-        self.minutes = minutes
-
-        # Google sometimes does not supply timezones
-        # (for events that last more than a day and have no time set, apparently)
-        # python can't compare two dates if only one has TZ info
-        # this might screw us at, say, if DST changes between when we get the event and its alarm
-        try:
-            if not self.start.tzname():
-                self.start = self.start.replace(tzinfo=tzlocal())
-        except AttributeError:
-            self.start = self.start.replace(tzinfo=tzlocal())
-
-        self.start_str = self.start.astimezone(tzlocal()).strftime(settings.strftime_string)
-        self.reminder_time = get_unix_timestamp(self.start - timedelta(minutes=self.minutes)) # Store only the UNIX timestamp
-        self.start = get_unix_timestamp(self.start) # Store only the UNIX timestamp
-
-    def notify(self):
-        """Show the alarm box for one event/recurrence"""
-        message(text.bold+'\n########## ALARM ##########'+text.normal)
-        message(self.get_formatted())
-        message(text.bold+'########## ALARM ##########\n'+text.normal)
-
-        if self.where:
-            a = Notification(self.title, '<b>Starting:</b> {start}\n<b>Where:</b> {location}'.format(start=self.start_str, location=self.where), settings.icon)
-        else:
-            a = Notification(self.title, '<b>Starting:</b> {start}'.format(start=self.start_str), settings.icon)
-
-        # Display the alarm notification the user closes it manually
-        a.set_timeout(EXPIRES_NEVER)
-
-        if not a.show():
-            message('Failed to send alarm notification!')
-
-    def get_formatted(self):
-        """Returns a string representation of this object's contents."""
-        representation = (
-            ('Title:',        self.title),
-            ('Location:',     self.where),
-            ('Start time:',   self.start),
-            ('Reminder set:', '{0} minutes before'.format(self.minutes)),
-        )
-
-        return '\n'.join(map(lambda x: '{0:<15} {1}'.format(x[0], x[1]), representation))
-
-    def __str__(self):
-        """Returns a string representation of this object."""
-        return 'GCalertNotification({title}, {location}, {start}, {minutes})'.format(
-            title    = self.title,
-            location = self.where,
-            start    = self.start,
-            minutes  = self.minutes
-        )
-
-    def __eq__(self, other):
-        return hash(self) == hash(other)
-
-    def __hash__(self):
-        return hash(str(self))
-
 
 #-----------------------------------------------------------------------------#
 # GCalert Class                                                               #
@@ -184,7 +96,7 @@ class GCalert(object):
         super(GCalert, self).__init__()
 
         # Create a global settings instance
-        settings.initialize_user_settings()
+        # settings.initialize_user_settings()
 
         # Set GCalert properties
         self.events = [] # All events seen so far that are yet to start
@@ -199,8 +111,7 @@ class GCalert(object):
         signal(SIGINT, self.stopthismadness)
 
         # Start up
-        message('{0} {1} running', __program__, __version__)
-        debug('Settings: {0}', settings.get_settings())
+        output.message('{0} {1} running', __program__, __version__)
 
         # Start up the event processing thread
         debug('Starting event processing thread')
@@ -240,10 +151,10 @@ class GCalert(object):
             debug('Connection lost: {0}.', error)
 
             try:
-                message('Connection lost ({0} {1}), will reconnect.', error.args[0]['status'], error.args[0]['reason'])
+                output.message('Connection lost ({0} {1}), will reconnect.', error.args[0]['status'], error.args[0]['reason'])
             except Exception:
-                message('Connection lost with unknown error, will reconnect: {0}', error)
-                message('Please report this as a bug.')
+                output.message('Connection lost with unknown error, will reconnect: {0}', error)
+                output.message('Please report this as a bug.')
 
             self.connected = False
             debug('Done querying for new events')
@@ -316,11 +227,11 @@ class GCalert(object):
             self.calendar_service = build(serviceName='calendar', version='v3', http=auth_http)
         except Exception as error:
             debug('Failed to authenticate to Google: {0}', error)
-            message('Failed to authenticate to Google.')
+            output.message('Failed to authenticate to Google.')
             self.connected = False # Login failed
             return
 
-        message('Logged in to Google Calendar')
+        output.message('Logged in to Google Calendar')
         self.connected = True # We're logged in
 
     #-----------------------------------------------------------------------------#
@@ -331,14 +242,14 @@ class GCalert(object):
         """Process events and raise alarms via pynotify."""
         # Initialize notification system
         if not init(__program__+'/'+__version__):
-            message('Could not initialize pynotify/libnotify!')
+            output.message('Could not initialize pynotify/libnotify!')
             exit(1)
 
         sleep(settings.threads_offset) # Give a chance for the other thread to get some events
 
         try:
             while True:
-                now = get_unix_timestamp(datetime.now(tzlocal())) # Get the current UNIX timestamp
+                now = time.get_unix_timestamp(datetime.now(tzlocal())) # Get the current UNIX timestamp
                 debug('Processing events...')
 
                 self.events_lock.acquire()
@@ -426,7 +337,7 @@ class GCalert(object):
 
     def stopthismadness(self, signal, frame):
         """Halts execution and exits. Intended for SIGINT (^C)."""
-        message('Shutting down on SIGINT.')
+        output.message('Shutting down on SIGINT.')
         exit(0)
 
 #-----------------------------------------------------------------------------#
@@ -445,197 +356,13 @@ class text:
     underline = '\033[4m'
     normal    = '\033[0m'
 
-#-----------------------------------------------------------------------------#
-# GCalert Settings                                                            #
-#-----------------------------------------------------------------------------#
-
-class settings(object):
-    """Stores all settings for this gcalert instance."""
-
-    config_directory     = '~/.config/gcalert/'
-    abs_config_directory = None
-    secrets_filename     = '.gcalert_oauth'
-    rc_filename          = 'gcalertrc'
-    secrets_file         = None
-    rc_file              = None
-    alarm_sleeptime      = 300               # Seconds between waking up to check the alarm list
-    query_sleeptime      = 180               # Seconds between querying for new events
-    lookahead_days       = 3                 # Look this many days in the future
-    debug_flag           = False             # Display debug messages
-    quiet_flag           = False             # Suppresses all non-debug messages
-    reconnect_sleeptime  = 300               # Seconds between reconnects in case of errors
-    threads_offset       = 2                 # Offset between the two threads' runs, in seconds
-    strftime_string      = '%H:%M %Y-%m-%d'  # String to format times with
-    icon                 = 'gtk-dialog-info' # Icon to use in notifications
-
-    @staticmethod
-    def initialize_user_settings():
-        """Initializes user settings from their gcalertrc and then from their commandline arguments."""
-        # TODO Parse the command line rcfile argument before actually parsing the rcfile
-        settings.abs_config_directory = path.expanduser(settings.config_directory)
-        settings.secrets_file         = path.join(settings.abs_config_directory, settings.secrets_filename)
-        settings.rc_file              = path.join(settings.abs_config_directory, settings.rc_filename)
-
-        # Create the config directory if it doesn't already exist
-        if not path.exists(settings.abs_config_directory):
-            makedirs(settings.abs_config_directory)
-
-        # Handle gcalertrc file arguments
-        if path.exists(settings.rc_file):
-            with open(settings.rc_file, 'r') as rc_file:
-                rc_arguments = rc_file.read().splitlines()
-            settings.handle_arguments(rc_arguments)
-
-        # Handle command line arguments
-        settings.handle_arguments(argv[1:])
-
-    @staticmethod
-    def handle_arguments(args):
-        """Parses the given list of commandline arguments."""
-        try:
-            opts, args = getopt(
-                args, 'hdqs:u:c:a:l:r:t:i:', ['help', 'debug', 'quiet', 'secret=', 'rc=', 'check=', 'alarm=', 'look=', 'retry=', 'timeformat=', 'icon='])
-        except GetoptError as err:
-            # Print help information and exit:
-            print(err) # Will print something like "option -a not recognized"
-            exit(2)
-
-        try:
-            for o, a in opts:
-                if o in ('-d', '--debug'):
-                    settings.debug_flag = True
-                elif o in ('-h', '--help'):
-                    message(settings.usage(), force=True)
-                    exit()
-                elif o in ('-q', '--quiet'):
-                    settings.quiet_flag = True
-                elif o in ('-s', '--secret'):
-                    settings.secrets_file = a
-                    debug('Secrets file set to {0}', settings.secrets_file)
-                elif o in ('-u', '--rc'):
-                    settings.rc_file = a
-                    debug('gcalertrc file set to {0}', settings.rc_file)
-                elif o in ('-c', '--check'):
-                    settings.query_sleeptime = max(int(a), 5)
-                    debug('Query sleep time set to {0}', settings.query_sleeptime)
-                elif o in ('-a', '--alarm'):
-                    settings.alarm_sleeptime = int(a)
-                    debug('Alarm sleep time set to {0}', settings.alarm_sleeptime)
-                elif o in ('-l', "--look"):
-                    settings.lookahead_days = int(a)
-                    debug('Lookahead days set to {0}', settings.lookahead_days)
-                elif o in ('-r', '--retry'):
-                    settings.reconnect_sleeptime = int(a)
-                    debug('Reconnect sleep time set to {0}', settings.reconnect_sleeptime)
-                elif o in ('-t', '--timeformat'):
-                    settings.strftime_string = a
-                    debug("strftime format string set to {0}", settings.strftime_string)
-                elif o in ('-i', '--icon'):
-                    settings.icon = a
-                    debug('Icon set to {0}', settings.icon)
-                else:
-                    assert False, 'Unsupported argument'
-        except ValueError:
-            message('Option {0} requires an integer parameter; use \'-h\' for help.', o)
-            exit(1)
-
-    @staticmethod
-    def usage():
-        return '''{program} {version} - Displays reminder notifications for Google Calendar events.
-
-Usage: {executable} [options]
-
--u
---rc       Specifies the location of the gcalertrc file.
-           This file may contain one command line parameter
-           per line, and will be used to configure {program}
-           before any command line arguments are parsed.
-           (Default: {default_rc})
-
--s
---secret   Specifies the location of the oauth credentials cache.
-           (Default: {default_secret})
-
--d
---debug    Print debug messages.
-
--q
---quiet    Disable all non-debug messages.
-
--c
---check    Number of seconds between queries for new calendar events.
-           (Default: {default_query})
-
--a seconds
---alarm seconds
-           Number of seconds between checking for reminders to display.
-           (Default: {default_alarm})
-
--l days
---look days
-           Number of days to look ahead when checking for new events.
-           (Default: {default_look})
-
--r seconds
---retry seconds
-           Number of seconds to wait between reconnection attempts.
-           (Default: {default_retry})
-
--t format_string
---timeformat format_string
-           Formatting string to use for displaying event times.
-           Must be formatted according to strftime(3).
-           (Default: {default_timeformat})
-
--i icon_name
---icon icon_name
-           Sets the icon displayed in reminder notifications.
-           (Default: {default_icon})'''.format(
-            program            = __program__,
-            version            = __version__,
-            executable         = argv[0],
-            default_rc         = settings.config_directory + settings.rc_filename,
-            default_secret     = settings.config_directory + settings.secrets_filename,
-            default_query      = settings.query_sleeptime,
-            default_alarm      = settings.alarm_sleeptime,
-            default_look       = settings.lookahead_days,
-            default_retry      = settings.reconnect_sleeptime,
-            default_timeformat = settings.strftime_string,
-            default_icon       = settings.icon
-        )
-
-    @staticmethod
-    def get_settings():
-        """Returns a string representation of the settings."""
-        return '''
-            Secrets file:         {secrets_file}
-            Alarm sleep time:     {alarm_time}
-            Query sleep time:     {query_time}
-            Lookahead days:       {lookahead}
-            Debug:                {debug}
-            Quiet:                {quiet}
-            Reconnect sleep time: {reconnect_time}
-            Thread offset:        {thread_offset}
-            strftime format:      {strftime_str}
-            Icon:                 {icon}
-        '''.format(
-            secrets_file   = settings.secrets_file,
-            alarm_time     = settings.alarm_sleeptime,
-            query_time     = settings.query_sleeptime,
-            lookahead      = settings.lookahead_days,
-            debug          = settings.debug_flag,
-            quiet          = settings.quiet_flag,
-            reconnect_time = settings.reconnect_sleeptime,
-            thread_offset  = settings.threads_offset,
-            strftime_str   = settings.strftime_string,
-            icon           = settings.icon
-        )
-
 
 
 #-----------------------------------------------------------------------------#
 # Let's get started!                                                          #
 #-----------------------------------------------------------------------------#
+
+settings.apply_cmd_args(argv[1:])
 
 if __name__ == '__main__':
     GCalert()
